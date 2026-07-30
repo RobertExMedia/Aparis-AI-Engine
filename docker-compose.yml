@@ -30,6 +30,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET}
       API_KEY_HASH_SECRET: ${API_KEY_HASH_SECRET}
+      API_KEY_HASHED: ${API_KEY_HASHED}
       MASTER_API_KEYS: ${MASTER_API_KEYS:-}
 
       # External Ollama on ollama-network (container alias: ollama)
