@@ -8,20 +8,23 @@ export async function registerRateLimit(app: FastifyInstance): Promise<void> {
     global: true,
     max: config.rateLimit.max,
     timeWindow: config.rateLimit.windowMs,
-    // ioredis v5 instance is compatible at runtime
     redis: redis as never,
     keyGenerator: (request) => {
-      const workspaceId = request.auth?.workspaceId;
+      if (request.auth?.method === 'supabase' && request.auth.userId) {
+        return `rl:user:${request.auth.userId}`;
+      }
+      const workspaceId =
+        request.auth && 'workspaceId' in request.auth
+          ? request.auth.workspaceId
+          : undefined;
       if (workspaceId) return `rl:ws:${workspaceId}`;
       const apiKey = request.headers['x-api-key'];
       if (typeof apiKey === 'string') return `rl:key:${apiKey.slice(0, 16)}`;
       return `rl:ip:${request.ip}`;
     },
     errorResponseBuilder: () => ({
-      error: {
-        code: 'RATE_LIMIT_EXCEEDED',
-        message: 'Too many requests. Please try again later.',
-      },
+      error: 'RATE_LIMITED',
+      message: 'Too many requests. Please try again shortly.',
     }),
   });
 }

@@ -1,56 +1,47 @@
 import { z } from 'zod';
 
-export const chatMessageSchema = z.object({
-  role: z.enum(['system', 'user', 'assistant', 'tool']),
-  content: z.string().min(1),
-  name: z.string().optional(),
-});
+export const dashboardChatBodySchema = z
+  .object({
+    workspaceId: z.string().uuid(),
+    agentId: z.string().uuid(),
+    conversationId: z.string().uuid().optional(),
+    message: z.string().min(1).max(32_000),
+  })
+  .strict();
 
-export const chatBodySchema = z.object({
-  workspaceId: z.string().min(1),
-  agentId: z.string().optional(),
-  conversationId: z.string().optional(),
-  messages: z.array(chatMessageSchema).min(1),
-  model: z.string().optional(),
-  temperature: z.number().min(0).max(2).optional(),
-  maxTokens: z.number().int().positive().optional(),
-  systemPrompt: z.string().optional(),
-});
+export type DashboardChatBody = z.infer<typeof dashboardChatBodySchema>;
 
-export type ChatBody = z.infer<typeof chatBodySchema>;
-
-/** Fastify JSON Schema for Swagger documentation */
-export const chatBodyJsonSchema = {
+export const dashboardChatBodyJsonSchema = {
   type: 'object',
-  required: ['workspaceId', 'messages'],
+  additionalProperties: false,
+  required: ['workspaceId', 'agentId', 'message'],
   properties: {
-    workspaceId: { type: 'string', description: 'Tenant workspace ID' },
-    agentId: { type: 'string', description: 'Optional agent ID' },
-    conversationId: { type: 'string', description: 'Optional existing conversation ID' },
-    messages: {
-      type: 'array',
-      minItems: 1,
-      items: {
-        type: 'object',
-        required: ['role', 'content'],
-        properties: {
-          role: { type: 'string', enum: ['system', 'user', 'assistant', 'tool'] },
-          content: { type: 'string' },
-          name: { type: 'string' },
-        },
-      },
+    workspaceId: {
+      type: 'string',
+      format: 'uuid',
+      description: 'Workspace UUID. Membership is verified server-side.',
     },
-    model: { type: 'string', description: 'Override model (defaults to OLLAMA_CHAT_MODEL)' },
-    temperature: { type: 'number', minimum: 0, maximum: 2 },
-    maxTokens: { type: 'integer', minimum: 1 },
-    systemPrompt: { type: 'string' },
+    agentId: {
+      type: 'string',
+      format: 'uuid',
+      description: 'Agent UUID. Must belong to the workspace.',
+    },
+    conversationId: {
+      type: 'string',
+      format: 'uuid',
+      description: 'Optional existing conversation UUID',
+    },
+    message: {
+      type: 'string',
+      description: 'User message. systemPrompt is never accepted from the client.',
+    },
   },
 } as const;
 
-export const chatResponseJsonSchema = {
+export const dashboardChatResponseJsonSchema = {
   type: 'object',
   properties: {
-    id: { type: 'string' },
+    requestId: { type: 'string' },
     conversationId: { type: 'string' },
     message: {
       type: 'object',
@@ -60,6 +51,8 @@ export const chatResponseJsonSchema = {
       },
     },
     model: { type: 'string' },
+    provider: { type: 'string' },
+    durationMs: { type: 'integer' },
     usage: {
       type: 'object',
       properties: {
@@ -68,19 +61,13 @@ export const chatResponseJsonSchema = {
         totalTokens: { type: 'integer' },
       },
     },
-    finishReason: { type: 'string' },
   },
 } as const;
 
 export const errorResponseJsonSchema = {
   type: 'object',
   properties: {
-    error: {
-      type: 'object',
-      properties: {
-        code: { type: 'string' },
-        message: { type: 'string' },
-      },
-    },
+    error: { type: 'string' },
+    message: { type: 'string' },
   },
 } as const;

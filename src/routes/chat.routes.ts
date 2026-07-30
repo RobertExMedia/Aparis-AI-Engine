@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { chatController } from '../controllers/chat.controller.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticateSupabaseUser } from '../middleware/auth.js';
 import { usageTracker } from '../middleware/usage.js';
 import {
-  chatBodyJsonSchema,
-  chatResponseJsonSchema,
+  dashboardChatBodyJsonSchema,
+  dashboardChatResponseJsonSchema,
   errorResponseJsonSchema,
 } from '../types/schemas.js';
 
@@ -12,19 +12,23 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     '/chat',
     {
-      preHandler: [authenticate, usageTracker],
+      preHandler: [authenticateSupabaseUser, usageTracker],
       schema: {
         tags: ['Chat'],
-        summary: 'Send a chat completion request',
+        summary: 'Dashboard chat completion',
         description:
-          'Processes a multi-tenant chat request through the AI provider (Ollama). Requires JWT or API key authentication.',
-        security: [{ bearerAuth: [] }, { apiKeyAuth: [] }],
-        body: chatBodyJsonSchema,
+          'Authenticates a Supabase user, verifies workspace membership (owner/admin/editor), loads the agent configuration from Supabase, calls Ollama, and stores the conversation. Never accepts systemPrompt from the client.',
+        security: [{ supabaseBearer: [] }],
+        body: dashboardChatBodyJsonSchema,
         response: {
-          200: chatResponseJsonSchema,
+          200: dashboardChatResponseJsonSchema,
           400: errorResponseJsonSchema,
           401: errorResponseJsonSchema,
           403: errorResponseJsonSchema,
+          404: errorResponseJsonSchema,
+          409: errorResponseJsonSchema,
+          429: errorResponseJsonSchema,
+          503: errorResponseJsonSchema,
         },
       },
     },
@@ -34,18 +38,22 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     '/chat/stream',
     {
-      preHandler: [authenticate, usageTracker],
+      preHandler: [authenticateSupabaseUser, usageTracker],
       schema: {
         tags: ['Chat'],
-        summary: 'Stream a chat completion (SSE)',
+        summary: 'Dashboard streaming chat (SSE)',
         description:
-          'Returns Server-Sent Events with incremental tokens. Final event includes usage stats; stream ends with data: [DONE].',
-        security: [{ bearerAuth: [] }, { apiKeyAuth: [] }],
-        body: chatBodyJsonSchema,
+          'Same authz as /chat. Emits SSE events: start, token, done, error. Aborts Ollama when the client disconnects.',
+        security: [{ supabaseBearer: [] }],
+        body: dashboardChatBodyJsonSchema,
         response: {
           400: errorResponseJsonSchema,
           401: errorResponseJsonSchema,
           403: errorResponseJsonSchema,
+          404: errorResponseJsonSchema,
+          409: errorResponseJsonSchema,
+          429: errorResponseJsonSchema,
+          503: errorResponseJsonSchema,
         },
       },
     },

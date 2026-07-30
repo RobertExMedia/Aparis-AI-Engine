@@ -1,7 +1,9 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { config } from '../config/index.js';
 
 export function hashApiKey(key: string): string {
-  return createHash('sha256').update(key).digest('hex');
+  const pepper = config.apiKeyHashSecret ?? '';
+  return createHash('sha256').update(`${pepper}${key}`).digest('hex');
 }
 
 export function generateApiKey(prefix = 'apk'): { key: string; hash: string; keyPrefix: string } {
