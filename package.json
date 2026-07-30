@@ -15,7 +15,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
-    "generate-api-key": "tsx scripts/generate-api-key.ts"
+    "generate-api-key": "node dist/cli/generate-api-key.js"
   },
   "engines": {
     "node": ">=22"
