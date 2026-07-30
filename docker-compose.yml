@@ -32,7 +32,7 @@ services:
       API_KEY_HASH_SECRET: ${API_KEY_HASH_SECRET}
       MASTER_API_KEYS: ${MASTER_API_KEYS:-}
 
-      # Ollama on xCloud / ai.aparis.io
+      # External Ollama (managed separately — not a Compose service)
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
       OLLAMA_CHAT_ENDPOINT: ${OLLAMA_CHAT_ENDPOINT:-/api/chat}
       OLLAMA_MODELS_ENDPOINT: ${OLLAMA_MODELS_ENDPOINT:-/api/tags}
@@ -97,21 +97,9 @@ services:
     networks:
       - aparis
 
-  ollama:
-    image: ollama/ollama:latest
-    container_name: aparis-ollama
-    restart: unless-stopped
-    ports:
-      - "18002:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    networks:
-      - aparis
-
 volumes:
   postgres_data:
   redis_data:
-  ollama_data:
 
 networks:
   aparis:
