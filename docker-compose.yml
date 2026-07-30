@@ -6,31 +6,46 @@ services:
     container_name: aparis-ai-engine
     restart: unless-stopped
     ports:
-      - "${PORT:-3000}:3000"
+      - "3000:3000"
     environment:
       NODE_ENV: production
-      PORT: 3000
-      HOST: 0.0.0.0
+      PORT: "3000"
+      HOST: "0.0.0.0"
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      DATABASE_URL: postgresql://aparis:${POSTGRES_PASSWORD:-aparis}@postgres:5432/aparis_ai_engine?schema=public
+
+      # Operational Postgres (Compose service hostname: postgres)
+      DATABASE_URL: postgresql://aparis:${POSTGRES_PASSWORD}@postgres:5432/aparis_ai_engine?schema=public
+
+      # Redis (Compose service hostname: redis)
       REDIS_URL: redis://redis:6379
+
+      # Supabase (Aparis AI Hub) — user JWT + RLS; service role optional
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
-      # Optional — omit on Lovable Cloud
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+
+      # Engine secrets (required — no placeholders)
       JWT_SECRET: ${JWT_SECRET}
-      API_KEY_HASH_SECRET: ${API_KEY_HASH_SECRET:-}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET}
+      API_KEY_HASH_SECRET: ${API_KEY_HASH_SECRET}
       MASTER_API_KEYS: ${MASTER_API_KEYS:-}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-https://ai.aparis.io}
+
+      # Ollama on xCloud / ai.aparis.io
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
       OLLAMA_CHAT_ENDPOINT: ${OLLAMA_CHAT_ENDPOINT:-/api/chat}
       OLLAMA_MODELS_ENDPOINT: ${OLLAMA_MODELS_ENDPOINT:-/api/tags}
       OLLAMA_EMBEDDINGS_ENDPOINT: ${OLLAMA_EMBEDDINGS_ENDPOINT:-/api/embeddings}
-      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-deepseek-r1:1.5b}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL}
       OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
       OLLAMA_REQUEST_TIMEOUT_MS: ${OLLAMA_REQUEST_TIMEOUT_MS:-120000}
+      OLLAMA_ALLOWED_MODELS: ${OLLAMA_ALLOWED_MODELS:-}
+
+      # CORS
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+
+      # Rate limit
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-100}
       RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-60000}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://studio.aparis.io,http://localhost:5173,http://localhost:8080}
     depends_on:
       postgres:
         condition: service_healthy
@@ -45,17 +60,19 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: aparis
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aparis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: aparis_ai_engine
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+    # Not published to the host — reachable only as hostname `postgres` on the compose network
+    expose:
+      - "5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U aparis -d aparis_ai_engine"]
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 10s
     networks:
       - aparis
 
@@ -63,16 +80,18 @@ services:
     image: redis:7-alpine
     container_name: aparis-ai-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --save 60 1
     volumes:
       - redis_data:/data
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
+    # Not published to the host — reachable only as hostname `redis` on the compose network
+    expose:
+      - "6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
+      start_period: 5s
     networks:
       - aparis
 

@@ -26,7 +26,8 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOST=0.0.0.0
 
-RUN addgroup --system --gid 1001 aparis \
+RUN apk add --no-cache wget \
+  && addgroup --system --gid 1001 aparis \
   && adduser --system --uid 1001 aparis
 
 COPY --from=build --chown=aparis:aparis /app/node_modules ./node_modules
@@ -37,7 +38,8 @@ COPY --from=build --chown=aparis:aparis /app/prisma ./prisma
 USER aparis
 EXPOSE 3000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
   CMD wget -qO- http://127.0.0.1:3000/api/v1/health || exit 1
 
+# Apply Prisma migrations against DATABASE_URL, then start the API on 0.0.0.0:3000
 CMD ["sh", "-c", "npx prisma migrate deploy && node dist/server.js"]
