@@ -268,7 +268,7 @@ describe('SupabaseAgentRepository', () => {
 
 describe('security redaction', () => {
   it('does not require service role key for Hub playground', () => {
-    expect(config.supabase.serviceRoleKey).toBe('');
+    expect(config.supabase.serviceRoleKey).toBeUndefined();
   });
 
   it('logger redact paths include authorization and api key headers', async () => {

@@ -9,18 +9,29 @@ const PLACEHOLDER_API_KEYS = new Set([
   'changeme',
 ]);
 
+/** Treat undefined / null / "" / whitespace as absent. */
+function emptyToUndefined(value: unknown): unknown {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
+}
+
+const optionalEnvString = z.preprocess(emptyToUndefined, z.string().min(1).optional());
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().default(3000),
   HOST: z.string().default('0.0.0.0'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 
-  DATABASE_URL: z.string().min(1).optional(),
-  REDIS_URL: z.string().min(1).optional(),
+  DATABASE_URL: optionalEnvString,
+  REDIS_URL: optionalEnvString,
 
-  SUPABASE_URL: z.string().url().optional(),
-  SUPABASE_ANON_KEY: z.string().min(1).optional(),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
+  SUPABASE_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  SUPABASE_ANON_KEY: optionalEnvString,
+  // Optional — Docker Compose may inject "" when omitted; must not fail Zod min(1)
+  SUPABASE_SERVICE_ROLE_KEY: optionalEnvString,
 
   OLLAMA_BASE_URL: z.string().url().default('https://ai.aparis.io'),
   OLLAMA_CHAT_ENDPOINT: z.string().default('/api/chat'),
@@ -33,9 +44,9 @@ const envSchema = z.object({
   OLLAMA_TIMEOUT_MS: z.coerce.number().optional(),
   OLLAMA_ALLOWED_MODELS: z.string().optional().default(''),
 
-  JWT_SECRET: z.string().min(16).optional(),
+  JWT_SECRET: z.preprocess(emptyToUndefined, z.string().min(16).optional()),
   JWT_EXPIRES_IN: z.string().default('7d'),
-  ADMIN_JWT_SECRET: z.string().min(16).optional(),
+  ADMIN_JWT_SECRET: z.preprocess(emptyToUndefined, z.string().min(16).optional()),
   API_KEY_HASH_SECRET: z.string().optional().default(''),
   MASTER_API_KEYS: z.string().optional().default(''),
 
@@ -130,8 +141,8 @@ export const config = {
   supabase: {
     url: requireInProd('SUPABASE_URL', env.SUPABASE_URL),
     anonKey: requireInProd('SUPABASE_ANON_KEY', env.SUPABASE_ANON_KEY),
-    /** Optional — Lovable Cloud does not expose this. Hub playground uses JWT + RLS. */
-    serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY?.trim() || '',
+    /** Optional — Lovable Cloud / Compose may omit or pass "". Normalized to undefined. */
+    serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
   },
 
   jwt: {
