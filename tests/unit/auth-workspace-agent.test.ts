@@ -8,7 +8,9 @@ import {
 
 vi.mock('../../src/supabase/client.js', () => ({
   createUserSupabaseClient: vi.fn(),
+  createAnonSupabaseClient: vi.fn(),
   getServiceSupabaseClient: vi.fn(),
+  hasServiceRoleKey: vi.fn().mockReturnValue(false),
   resetServiceSupabaseClient: vi.fn(),
 }));
 
@@ -19,7 +21,7 @@ vi.mock('../../src/config/database.js', () => ({
   },
 }));
 
-import { createUserSupabaseClient, getServiceSupabaseClient } from '../../src/supabase/client.js';
+import { createUserSupabaseClient } from '../../src/supabase/client.js';
 import { authenticateSupabaseUser } from '../../src/middleware/auth.js';
 import { WorkspaceAuthorizationService } from '../../src/services/workspace-authorization.service.js';
 import { SupabaseAgentRepository } from '../../src/repositories/supabase/agent.repository.js';
@@ -65,6 +67,23 @@ describe('authenticateSupabaseUser', () => {
     );
   });
 
+  it('rejects expired / invalid token via getUser fallback', async () => {
+    vi.mocked(createUserSupabaseClient).mockReturnValue({
+      auth: {
+        getClaims: vi.fn().mockResolvedValue({ data: null, error: { message: 'expired' } }),
+        getUser: vi.fn().mockResolvedValue({
+          data: { user: null },
+          error: { message: 'token is expired' },
+        }),
+      },
+    } as never);
+
+    const req = mockRequest('Bearer aaa.bbb.ccc');
+    await expect(authenticateSupabaseUser(req as never, {} as never)).rejects.toBeInstanceOf(
+      UnauthorizedError,
+    );
+  });
+
   it('accepts valid authenticated user', async () => {
     vi.mocked(createUserSupabaseClient).mockReturnValue({
       auth: {
@@ -95,13 +114,6 @@ describe('WorkspaceAuthorizationService', () => {
   it('rejects user not in workspace', async () => {
     vi.mocked(createUserSupabaseClient).mockReturnValue({
       rpc: vi.fn().mockResolvedValue({ data: null, error: { message: 'none' } }),
-      from: vi.fn().mockReturnValue({
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-      }),
-    } as never);
-    vi.mocked(getServiceSupabaseClient).mockReturnValue({
       from: vi.fn().mockReturnValue({
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
@@ -201,7 +213,7 @@ describe('SupabaseAgentRepository', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('rejects agent in another workspace', async () => {
-    vi.mocked(getServiceSupabaseClient).mockReturnValue({
+    vi.mocked(createUserSupabaseClient).mockReturnValue({
       from: vi.fn().mockReturnValue({
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
@@ -213,12 +225,13 @@ describe('SupabaseAgentRepository', () => {
       repo.loadAgentConfiguration(
         baseAgent.id,
         '00000000-0000-4000-8000-000000000099',
+        'tok',
       ),
     ).rejects.toBeInstanceOf(AgentNotFoundError);
   });
 
   it('rejects archived agent', async () => {
-    vi.mocked(getServiceSupabaseClient).mockReturnValue({
+    vi.mocked(createUserSupabaseClient).mockReturnValue({
       from: vi.fn().mockReturnValue({
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
@@ -230,12 +243,12 @@ describe('SupabaseAgentRepository', () => {
     } as never);
 
     await expect(
-      repo.loadAgentConfiguration(baseAgent.id, baseAgent.workspace_id),
+      repo.loadAgentConfiguration(baseAgent.id, baseAgent.workspace_id, 'tok'),
     ).rejects.toBeInstanceOf(AgentUnavailableError);
   });
 
   it('loads valid agent configuration', async () => {
-    vi.mocked(getServiceSupabaseClient).mockReturnValue({
+    vi.mocked(createUserSupabaseClient).mockReturnValue({
       from: vi.fn().mockReturnValue({
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
@@ -243,24 +256,23 @@ describe('SupabaseAgentRepository', () => {
       }),
     } as never);
 
-    const agent = await repo.loadAgentConfiguration(baseAgent.id, baseAgent.workspace_id);
+    const agent = await repo.loadAgentConfiguration(
+      baseAgent.id,
+      baseAgent.workspace_id,
+      'tok',
+    );
     expect(agent.system_prompt).toBe('You are helpful');
     expect(agent.public_id).toBe('agt_abc123');
   });
 });
 
 describe('security redaction', () => {
-  it('config never exposes service role in serializable public fields', () => {
-    const json = JSON.stringify({
-      url: config.supabase.url,
-      // intentionally omit service role from any public response shape
-    });
-    expect(json).not.toContain(config.supabase.serviceRoleKey);
+  it('does not require service role key for Hub playground', () => {
+    expect(config.supabase.serviceRoleKey).toBe('');
   });
 
   it('logger redact paths include authorization and api key headers', async () => {
     const { buildApp } = await import('../../src/app.js');
-    // Ensure module loads; redact config is in buildApp logger options
     expect(typeof buildApp).toBe('function');
   });
 });

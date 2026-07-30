@@ -1,4 +1,4 @@
-import { createUserSupabaseClient, getServiceSupabaseClient } from '../supabase/client.js';
+import { createUserSupabaseClient } from '../supabase/client.js';
 import { ForbiddenError, UnauthorizedError } from '../utils/errors.js';
 import type { WorkspaceRole } from '../types/index.js';
 
@@ -12,8 +12,8 @@ export interface WorkspaceAccess {
 }
 
 /**
- * Verifies workspace membership using real aparis-ai-hub tables/enums.
- * Prefers user-scoped client + RLS; falls back to service role only after token identity is known.
+ * Verifies workspace membership using aparis-ai-hub tables under the user's JWT + RLS.
+ * No service-role fallback (Lovable Cloud compatible).
  */
 export class WorkspaceAuthorizationService {
   async assertMembership(params: {
@@ -27,7 +27,6 @@ export class WorkspaceAuthorizationService {
 
     const userClient = createUserSupabaseClient(accessToken);
 
-    // Prefer RPC that mirrors RLS helpers in aparis-ai-hub
     const { data: rpcRole, error: rpcError } = await userClient.rpc(
       'current_user_workspace_role',
       { _workspace_id: workspaceId },
@@ -45,22 +44,9 @@ export class WorkspaceAuthorizationService {
         .maybeSingle();
 
       if (error || !membership) {
-        // Controlled service-role read after we already know userId from validated token
-        const admin = getServiceSupabaseClient();
-        const { data: fallback } = await admin
-          .from('workspace_members')
-          .select('role')
-          .eq('workspace_id', workspaceId)
-          .eq('user_id', userId)
-          .maybeSingle();
-
-        if (!fallback) {
-          throw new ForbiddenError('You do not have permission to use this agent.');
-        }
-        role = fallback.role as WorkspaceRole;
-      } else {
-        role = membership.role as WorkspaceRole;
+        throw new ForbiddenError('You do not have permission to use this agent.');
       }
+      role = membership.role as WorkspaceRole;
     }
 
     const canChat = CHAT_ROLES.has(role);
@@ -68,7 +54,6 @@ export class WorkspaceAuthorizationService {
       throw new ForbiddenError('You do not have permission to use this agent.');
     }
 
-    // Ensure workspace is not soft-deleted / suspended when readable
     const { data: workspace } = await userClient
       .from('workspaces')
       .select('id, status, deleted_at')

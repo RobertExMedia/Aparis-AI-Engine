@@ -82,6 +82,8 @@ export async function buildApp() {
           '',
           '**Dashboard auth:** `Authorization: Bearer <Supabase access token>`',
           '',
+          '**Data access:** Engine validates the user JWT and reads/writes agents & conversations under Supabase RLS. No service-role key is required for Hub playground.',
+          '',
           '**Workspace authorization:** user must be a member with role `owner`, `admin`, or `editor`. Viewers are rejected for chat.',
           '',
           '**Agent source of truth:** Supabase `agents` table from aparis-ai-hub (system_prompt loaded server-side; never accepted from the client).',

@@ -9,7 +9,6 @@ export default defineConfig({
       NODE_ENV: 'test',
       SUPABASE_URL: 'https://example.supabase.co',
       SUPABASE_ANON_KEY: 'test-anon-key',
-      SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key-never-expose',
       DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
       REDIS_URL: 'redis://localhost:6379',
       JWT_SECRET: 'test-jwt-secret-32-characters!!',

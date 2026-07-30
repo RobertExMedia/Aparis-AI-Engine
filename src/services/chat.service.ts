@@ -59,9 +59,11 @@ export class ChatService {
       request,
       userId,
       agent,
+      accessToken,
     });
 
     await supabaseConversationRepository.saveUserMessage({
+      accessToken,
       workspaceId: request.workspaceId,
       conversationId: conversation.id,
       content: request.message,
@@ -70,6 +72,7 @@ export class ChatService {
 
     if (!conversation.title) {
       void supabaseConversationRepository.generateConversationTitle({
+        accessToken,
         conversationId: conversation.id,
         workspaceId: request.workspaceId,
         firstMessage: request.message,
@@ -77,6 +80,7 @@ export class ChatService {
     }
 
     const history = await supabaseConversationRepository.listMessages({
+      accessToken,
       conversationId: conversation.id,
       workspaceId: request.workspaceId,
     });
@@ -109,6 +113,7 @@ export class ChatService {
       const durationMs = Date.now() - started;
 
       await supabaseConversationRepository.saveAssistantMessage({
+        accessToken,
         workspaceId: request.workspaceId,
         conversationId: conversation.id,
         content: result.message.content,
@@ -148,6 +153,7 @@ export class ChatService {
     } catch (err) {
       await supabaseConversationRepository
         .markGenerationFailed({
+          accessToken,
           conversationId: conversation.id,
           workspaceId: request.workspaceId,
           errorCode: 'AI_UNAVAILABLE',
@@ -211,9 +217,11 @@ export class ChatService {
         request,
         userId,
         agent,
+        accessToken,
       });
 
       await supabaseConversationRepository.saveUserMessage({
+        accessToken,
         workspaceId: request.workspaceId,
         conversationId: conversation.id,
         content: request.message,
@@ -222,6 +230,7 @@ export class ChatService {
 
       if (!conversation.title) {
         void supabaseConversationRepository.generateConversationTitle({
+          accessToken,
           conversationId: conversation.id,
           workspaceId: request.workspaceId,
           firstMessage: request.message,
@@ -234,6 +243,7 @@ export class ChatService {
       };
 
       const history = await supabaseConversationRepository.listMessages({
+        accessToken,
         conversationId: conversation.id,
         workspaceId: request.workspaceId,
       });
@@ -275,6 +285,7 @@ export class ChatService {
       if (signal?.aborted) {
         await supabaseConversationRepository
           .markGenerationFailed({
+            accessToken,
             conversationId: conversation.id,
             workspaceId: request.workspaceId,
             errorCode: 'CLIENT_DISCONNECTED',
@@ -295,6 +306,7 @@ export class ChatService {
 
       if (assistantContent) {
         await supabaseConversationRepository.saveAssistantMessage({
+          accessToken,
           workspaceId: request.workspaceId,
           conversationId: conversation.id,
           content: assistantContent,
@@ -338,9 +350,6 @@ export class ChatService {
         },
         'Stream chat failed',
       );
-
-      // Auth/validation errors should propagate for HTTP handling before SSE starts;
-      // once streaming, yield error event.
       throw err;
     }
   }
@@ -349,11 +358,13 @@ export class ChatService {
     request: DashboardChatRequest;
     userId: string;
     agent: AgentConfiguration;
+    accessToken: string;
   }) {
-    const { request, userId, agent } = params;
+    const { request, userId, agent, accessToken } = params;
 
     if (request.conversationId) {
       return supabaseConversationRepository.verifyConversationAccess({
+        accessToken,
         conversationId: request.conversationId,
         workspaceId: request.workspaceId,
         agentId: agent.id,
@@ -361,6 +372,7 @@ export class ChatService {
     }
 
     return supabaseConversationRepository.createConversation({
+      accessToken,
       workspaceId: request.workspaceId,
       agentId: agent.id,
       createdBy: userId,
@@ -377,5 +389,4 @@ export class ChatService {
 
 export const chatService = new ChatService();
 
-/** @deprecated legacy multi-message API — removed from routes */
 export type { ChatMessage };

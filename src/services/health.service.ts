@@ -3,7 +3,7 @@ import { statfs } from 'node:fs/promises';
 import { prisma } from '../config/database.js';
 import { redis } from '../config/redis.js';
 import { getAIProvider } from '../providers/index.js';
-import { getServiceSupabaseClient } from '../supabase/client.js';
+import { createAnonSupabaseClient } from '../supabase/client.js';
 import { config } from '../config/index.js';
 import type { ComponentHealth, HealthCheckResult } from '../types/index.js';
 
@@ -50,7 +50,8 @@ async function checkOllama(): Promise<ComponentHealth> {
 async function checkSupabase(): Promise<ComponentHealth> {
   const start = Date.now();
   try {
-    const client = getServiceSupabaseClient();
+    // `plans` is readable by anon in aparis-ai-hub — no service-role needed
+    const client = createAnonSupabaseClient();
     const { error } = await client.from('plans').select('code').limit(1);
     if (error) {
       return {

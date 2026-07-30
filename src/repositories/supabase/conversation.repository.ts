@@ -1,21 +1,27 @@
-import { getServiceSupabaseClient } from '../../supabase/client.js';
+import { createUserSupabaseClient } from '../../supabase/client.js';
 import { ForbiddenError, NotFoundError } from '../../utils/errors.js';
+import { logger } from '../../utils/logger.js';
 import type { ChatMessage } from '../../types/index.js';
 import type { Tables, Json } from '../../supabase/database.types.js';
 
 type ConversationRow = Tables<'conversations'>;
 type MessageRow = Tables<'conversation_messages'>;
 
+/**
+ * Conversation storage via the caller's Supabase JWT under RLS.
+ * Editors+ can insert/update; members can read (per aparis-ai-hub policies).
+ */
 export class SupabaseConversationRepository {
   async createConversation(params: {
+    accessToken: string;
     workspaceId: string;
     agentId: string;
     createdBy: string;
     channel?: string;
     title?: string | null;
   }): Promise<ConversationRow> {
-    const admin = getServiceSupabaseClient();
-    const { data, error } = await admin
+    const client = createUserSupabaseClient(params.accessToken);
+    const { data, error } = await client
       .from('conversations')
       .insert({
         workspace_id: params.workspaceId,
@@ -29,18 +35,20 @@ export class SupabaseConversationRepository {
       .single();
 
     if (error || !data) {
+      logger.warn({ code: error?.code }, 'Failed to create conversation');
       throw new Error('Failed to create conversation');
     }
     return data;
   }
 
   async findConversation(params: {
+    accessToken: string;
     conversationId: string;
     workspaceId: string;
     agentId?: string;
   }): Promise<ConversationRow | null> {
-    const admin = getServiceSupabaseClient();
-    let query = admin
+    const client = createUserSupabaseClient(params.accessToken);
+    let query = client
       .from('conversations')
       .select('*')
       .eq('id', params.conversationId)
@@ -57,6 +65,7 @@ export class SupabaseConversationRepository {
   }
 
   async verifyConversationAccess(params: {
+    accessToken: string;
     conversationId: string;
     workspaceId: string;
     agentId: string;
@@ -75,12 +84,13 @@ export class SupabaseConversationRepository {
   }
 
   async listMessages(params: {
+    accessToken: string;
     conversationId: string;
     workspaceId: string;
     limit?: number;
   }): Promise<ChatMessage[]> {
-    const admin = getServiceSupabaseClient();
-    const { data, error } = await admin
+    const client = createUserSupabaseClient(params.accessToken);
+    const { data, error } = await client
       .from('conversation_messages')
       .select('role, content')
       .eq('conversation_id', params.conversationId)
@@ -96,13 +106,14 @@ export class SupabaseConversationRepository {
   }
 
   async saveUserMessage(params: {
+    accessToken: string;
     workspaceId: string;
     conversationId: string;
     content: string;
     metadata?: Record<string, unknown>;
   }): Promise<MessageRow> {
-    const admin = getServiceSupabaseClient();
-    const { data, error } = await admin
+    const client = createUserSupabaseClient(params.accessToken);
+    const { data, error } = await client
       .from('conversation_messages')
       .insert({
         workspace_id: params.workspaceId,
@@ -114,12 +125,20 @@ export class SupabaseConversationRepository {
       .select('*')
       .single();
 
-    if (error || !data) throw new Error('Failed to save user message');
-    await this.updateConversationTimestamp(params.conversationId, params.workspaceId);
+    if (error || !data) {
+      logger.warn({ code: error?.code }, 'Failed to save user message');
+      throw new Error('Failed to save user message');
+    }
+    await this.updateConversationTimestamp(
+      params.accessToken,
+      params.conversationId,
+      params.workspaceId,
+    );
     return data;
   }
 
   async saveAssistantMessage(params: {
+    accessToken: string;
     workspaceId: string;
     conversationId: string;
     content: string;
@@ -128,8 +147,8 @@ export class SupabaseConversationRepository {
     responseTimeMs?: number;
     metadata?: Record<string, unknown>;
   }): Promise<MessageRow> {
-    const admin = getServiceSupabaseClient();
-    const { data, error } = await admin
+    const client = createUserSupabaseClient(params.accessToken);
+    const { data, error } = await client
       .from('conversation_messages')
       .insert({
         workspace_id: params.workspaceId,
@@ -144,26 +163,32 @@ export class SupabaseConversationRepository {
       .select('*')
       .single();
 
-    if (error || !data) throw new Error('Failed to save assistant message');
-    await this.updateConversationTimestamp(params.conversationId, params.workspaceId);
+    if (error || !data) {
+      logger.warn({ code: error?.code }, 'Failed to save assistant message');
+      throw new Error('Failed to save assistant message');
+    }
+    await this.updateConversationTimestamp(
+      params.accessToken,
+      params.conversationId,
+      params.workspaceId,
+    );
     return data;
   }
 
   async markGenerationFailed(params: {
+    accessToken: string;
     conversationId: string;
     workspaceId: string;
     errorCode?: string;
   }): Promise<void> {
-    const admin = getServiceSupabaseClient();
-    await admin
+    const client = createUserSupabaseClient(params.accessToken);
+    await client
       .from('conversations')
-      .update({
-        status: 'error',
-      })
+      .update({ status: 'error' })
       .eq('id', params.conversationId)
       .eq('workspace_id', params.workspaceId);
 
-    await admin.from('conversation_messages').insert({
+    await client.from('conversation_messages').insert({
       workspace_id: params.workspaceId,
       conversation_id: params.conversationId,
       role: 'system',
@@ -176,27 +201,27 @@ export class SupabaseConversationRepository {
   }
 
   async updateConversationTimestamp(
+    accessToken: string,
     conversationId: string,
     workspaceId: string,
   ): Promise<void> {
-    const admin = getServiceSupabaseClient();
-    await admin
+    const client = createUserSupabaseClient(accessToken);
+    await client
       .from('conversations')
       .update({ updated_at: new Date().toISOString(), status: 'active' })
       .eq('id', conversationId)
       .eq('workspace_id', workspaceId);
   }
 
-  /** Placeholder — titles can be generated by a later summarization job. */
   async generateConversationTitle(params: {
+    accessToken: string;
     conversationId: string;
     workspaceId: string;
     firstMessage: string;
   }): Promise<string> {
-    const title =
-      params.firstMessage.trim().slice(0, 80) || 'New conversation';
-    const admin = getServiceSupabaseClient();
-    await admin
+    const title = params.firstMessage.trim().slice(0, 80) || 'New conversation';
+    const client = createUserSupabaseClient(params.accessToken);
+    await client
       .from('conversations')
       .update({ title })
       .eq('id', params.conversationId)

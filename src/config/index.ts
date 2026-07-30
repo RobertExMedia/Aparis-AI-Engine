@@ -132,10 +132,8 @@ export const config = {
   supabase: {
     url: requireInProd('SUPABASE_URL', env.SUPABASE_URL),
     anonKey: requireInProd('SUPABASE_ANON_KEY', env.SUPABASE_ANON_KEY),
-    serviceRoleKey: requireInProd(
-      'SUPABASE_SERVICE_ROLE_KEY',
-      env.SUPABASE_SERVICE_ROLE_KEY,
-    ),
+    /** Optional — Lovable Cloud does not expose this. Hub playground uses JWT + RLS. */
+    serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY?.trim() || '',
   },
 
   jwt: {
@@ -190,12 +188,8 @@ export function runStartupSecurityChecks(): void {
   if (config.supabase.url.includes('example.supabase.co') && config.isProd) {
     throw new Error('SUPABASE_URL is not configured for production');
   }
-  if (
-    (config.supabase.anonKey.includes('replace-me') ||
-      config.supabase.serviceRoleKey.includes('replace-me')) &&
-    config.isProd
-  ) {
-    throw new Error('Supabase keys are placeholders in production');
+  if (config.supabase.anonKey.includes('replace-me') && config.isProd) {
+    throw new Error('SUPABASE_ANON_KEY is a placeholder in production');
   }
   if (config.isProd && config.allowedOrigins.includes('*')) {
     throw new Error('Wildcard ALLOWED_ORIGINS is not permitted in production');

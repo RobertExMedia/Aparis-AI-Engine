@@ -1,4 +1,4 @@
-import { getServiceSupabaseClient, createUserSupabaseClient } from '../../supabase/client.js';
+import { createUserSupabaseClient } from '../../supabase/client.js';
 import {
   AgentNotFoundError,
   AgentUnavailableError,
@@ -37,12 +37,13 @@ const AGENT_SELECT =
   'id, workspace_id, public_id, name, description, status, system_prompt, greeting, fallback_message, language, tone, temperature, max_tokens, settings, archived_at, published_at, avatar_url' as const;
 
 /**
- * Loads agents from the real aparis-ai-hub `agents` table.
+ * Loads agents via the caller's Supabase JWT under RLS.
+ * No service-role key required (Lovable Cloud compatible).
  */
 export class SupabaseAgentRepository {
-  async findById(agentId: string): Promise<AgentConfiguration | null> {
-    const admin = getServiceSupabaseClient();
-    const { data, error } = await admin
+  async findById(agentId: string, accessToken: string): Promise<AgentConfiguration | null> {
+    const client = createUserSupabaseClient(accessToken);
+    const { data, error } = await client
       .from('agents')
       .select(AGENT_SELECT)
       .eq('id', agentId)
@@ -54,9 +55,10 @@ export class SupabaseAgentRepository {
   async findByIdAndWorkspace(
     agentId: string,
     workspaceId: string,
+    accessToken: string,
   ): Promise<AgentConfiguration | null> {
-    const admin = getServiceSupabaseClient();
-    const { data, error } = await admin
+    const client = createUserSupabaseClient(accessToken);
+    const { data, error } = await client
       .from('agents')
       .select(AGENT_SELECT)
       .eq('id', agentId)
@@ -66,9 +68,12 @@ export class SupabaseAgentRepository {
     return toConfig(data as AgentRow);
   }
 
-  async findPublishedByPublicId(publicId: string): Promise<AgentConfiguration | null> {
-    const admin = getServiceSupabaseClient();
-    const { data, error } = await admin
+  async findPublishedByPublicId(
+    publicId: string,
+    accessToken: string,
+  ): Promise<AgentConfiguration | null> {
+    const client = createUserSupabaseClient(accessToken);
+    const { data, error } = await client
       .from('agents')
       .select(AGENT_SELECT)
       .eq('public_id', publicId)
@@ -78,8 +83,12 @@ export class SupabaseAgentRepository {
     return toConfig(data as AgentRow);
   }
 
-  async verifyWorkspaceOwnership(agentId: string, workspaceId: string): Promise<boolean> {
-    const agent = await this.findByIdAndWorkspace(agentId, workspaceId);
+  async verifyWorkspaceOwnership(
+    agentId: string,
+    workspaceId: string,
+    accessToken: string,
+  ): Promise<boolean> {
+    const agent = await this.findByIdAndWorkspace(agentId, workspaceId, accessToken);
     return Boolean(agent);
   }
 
@@ -90,31 +99,12 @@ export class SupabaseAgentRepository {
   async loadAgentConfiguration(
     agentId: string,
     workspaceId: string,
-    accessToken?: string,
+    accessToken: string,
   ): Promise<AgentConfiguration> {
-    let row: AgentRow | null = null;
-
-    if (accessToken) {
-      const userClient = createUserSupabaseClient(accessToken);
-      const { data } = await userClient
-        .from('agents')
-        .select(AGENT_SELECT)
-        .eq('id', agentId)
-        .eq('workspace_id', workspaceId)
-        .maybeSingle();
-      row = (data as AgentRow | null) ?? null;
-    }
-
-    if (!row) {
-      const found = await this.findByIdAndWorkspace(agentId, workspaceId);
-      if (!found) throw new AgentNotFoundError();
-      this.assertAvailable(found);
-      return found;
-    }
-
-    const config = toConfig(row);
-    this.assertAvailable(config);
-    return config;
+    const found = await this.findByIdAndWorkspace(agentId, workspaceId, accessToken);
+    if (!found) throw new AgentNotFoundError();
+    this.assertAvailable(found);
+    return found;
   }
 
   private assertAvailable(agent: AgentConfiguration): void {

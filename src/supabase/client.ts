@@ -16,7 +16,6 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
       new Headers(init.headers).forEach((value, key) => headers.set(key, value));
     }
 
-    // New Supabase API keys are opaque strings, not bearer JWTs.
     if (
       isNewSupabaseApiKey(supabaseKey) &&
       headers.get('Authorization') === `Bearer ${supabaseKey}`
@@ -33,6 +32,7 @@ export type AppSupabaseClient = SupabaseClient<Database>;
 
 /**
  * User-scoped client: RLS applies as the authenticated Supabase user.
+ * This is the primary path for Aparis AI Hub / Lovable Cloud (no service-role required).
  */
 export function createUserSupabaseClient(accessToken: string): AppSupabaseClient {
   return createClient<Database>(config.supabase.url, config.supabase.anonKey, {
@@ -50,13 +50,35 @@ export function createUserSupabaseClient(accessToken: string): AppSupabaseClient
   });
 }
 
+/**
+ * Anonymous / publishable client (no user JWT). Useful for health checks
+ * against publicly readable tables like `plans`.
+ */
+export function createAnonSupabaseClient(): AppSupabaseClient {
+  return createClient<Database>(config.supabase.url, config.supabase.anonKey, {
+    global: {
+      fetch: createSupabaseFetch(config.supabase.anonKey),
+    },
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+}
+
 let serviceClient: AppSupabaseClient | null = null;
 
 /**
- * Service-role client: bypasses RLS. Use only after explicit authorization checks.
- * Never expose this key to clients or logs.
+ * Optional service-role client. Not required for Hub playground.
+ * Lovable Cloud does not expose this key — leave SUPABASE_SERVICE_ROLE_KEY unset.
  */
 export function getServiceSupabaseClient(): AppSupabaseClient {
+  if (!config.supabase.serviceRoleKey) {
+    throw new Error(
+      'SUPABASE_SERVICE_ROLE_KEY is not configured. Hub playground uses user JWT + RLS instead.',
+    );
+  }
   if (!serviceClient) {
     serviceClient = createClient<Database>(
       config.supabase.url,
@@ -76,7 +98,10 @@ export function getServiceSupabaseClient(): AppSupabaseClient {
   return serviceClient;
 }
 
-/** Test helper to reset singleton. */
+export function hasServiceRoleKey(): boolean {
+  return Boolean(config.supabase.serviceRoleKey);
+}
+
 export function resetServiceSupabaseClient(): void {
   serviceClient = null;
 }

@@ -57,8 +57,8 @@ describe('CORS', () => {
   });
 });
 
-describe('service role never in responses', () => {
-  it('error bodies do not include service role key', async () => {
+describe('service role never required in responses', () => {
+  it('error bodies do not include service role material', async () => {
     const { errorHandler } = await import('../../src/middleware/error-handler.js');
     const { UnauthorizedError } = await import('../../src/utils/errors.js');
     const sent: unknown[] = [];
@@ -75,7 +75,7 @@ describe('service role never in responses', () => {
       reply as never,
     );
     const body = JSON.stringify(sent[0]);
-    expect(body).not.toContain(config.supabase.serviceRoleKey);
     expect(body).not.toContain('service_role');
+    expect(body).not.toContain('SERVICE_ROLE');
   });
 });
