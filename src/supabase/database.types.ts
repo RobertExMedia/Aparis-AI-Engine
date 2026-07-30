@@ -1,6 +1,5 @@
-// SOURCE: copied from aparis-ai-hub/src/integrations/supabase/types.ts
-// DO NOT edit casually — regenerate from hub when schema changes.
-// Extended below for conversations / conversation_messages migration.
+// SOURCE: synced from aparis-ai-hub/src/integrations/supabase/types.ts
+// Conversations/messages match hub migration 20260730101432_….
 
 export type Json =
   | string
@@ -341,49 +340,39 @@ export type Database = {
       }
       conversations: {
         Row: {
-          id: string
-          workspace_id: string
           agent_id: string
-          created_by: string | null
           channel: string
-          status: string
-          title: string | null
           created_at: string
+          id: string
+          last_message_at: string
+          started_by: string | null
+          title: string
           updated_at: string
-          deleted_at: string | null
+          workspace_id: string
         }
         Insert: {
-          id?: string
-          workspace_id: string
           agent_id: string
-          created_by?: string | null
           channel?: string
-          status?: string
-          title?: string | null
           created_at?: string
+          id?: string
+          last_message_at?: string
+          started_by?: string | null
+          title?: string
           updated_at?: string
-          deleted_at?: string | null
+          workspace_id: string
         }
         Update: {
-          id?: string
-          workspace_id?: string
           agent_id?: string
-          created_by?: string | null
           channel?: string
-          status?: string
-          title?: string | null
           created_at?: string
+          id?: string
+          last_message_at?: string
+          started_by?: string | null
+          title?: string
           updated_at?: string
-          deleted_at?: string | null
+          workspace_id?: string
         }
         Relationships: [
-          {
-            foreignKeyName: "conversations_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: false
-            referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
           {
             foreignKeyName: "conversations_agent_id_fkey"
             columns: ["agent_id"]
@@ -391,58 +380,62 @@ export type Database = {
             referencedRelation: "agents"
             referencedColumns: ["id"]
           },
-        ]
-      }
-      conversation_messages: {
-        Row: {
-          id: string
-          workspace_id: string
-          conversation_id: string
-          role: string
-          content: string
-          model: string | null
-          provider: string | null
-          response_time_ms: number | null
-          metadata: Json
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          workspace_id: string
-          conversation_id: string
-          role: string
-          content: string
-          model?: string | null
-          provider?: string | null
-          response_time_ms?: number | null
-          metadata?: Json
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          workspace_id?: string
-          conversation_id?: string
-          role?: string
-          content?: string
-          model?: string | null
-          provider?: string | null
-          response_time_ms?: number | null
-          metadata?: Json
-          created_at?: string
-        }
-        Relationships: [
           {
-            foreignKeyName: "conversation_messages_workspace_id_fkey"
+            foreignKeyName: "conversations_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
             referencedColumns: ["id"]
           },
+        ]
+      }
+      conversation_messages: {
+        Row: {
+          content: string
+          conversation_id: string
+          created_at: string
+          id: string
+          is_error: boolean
+          role: Database["public"]["Enums"]["message_role"]
+          token_count: number | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          content?: string
+          conversation_id: string
+          created_at?: string
+          id?: string
+          is_error?: boolean
+          role: Database["public"]["Enums"]["message_role"]
+          token_count?: number | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          content?: string
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          is_error?: boolean
+          role?: Database["public"]["Enums"]["message_role"]
+          token_count?: number | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
           {
             foreignKeyName: "conversation_messages_conversation_id_fkey"
             columns: ["conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversation_messages_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
             referencedColumns: ["id"]
           },
         ]
@@ -565,6 +558,7 @@ export type Database = {
         | "technical"
       app_role: "super_admin"
       invitation_status: "pending" | "accepted" | "expired" | "revoked"
+      message_role: "user" | "assistant" | "system"
       subscription_status: "trialing" | "active" | "past_due" | "cancelled"
       workspace_role: "owner" | "admin" | "editor" | "viewer"
       workspace_status: "trial" | "active" | "suspended" | "cancelled"
@@ -706,6 +700,7 @@ export const Constants = {
       ],
       app_role: ["super_admin"],
       invitation_status: ["pending", "accepted", "expired", "revoked"],
+      message_role: ["user", "assistant", "system"],
       subscription_status: ["trialing", "active", "past_due", "cancelled"],
       workspace_role: ["owner", "admin", "editor", "viewer"],
       workspace_status: ["trial", "active", "suspended", "cancelled"],

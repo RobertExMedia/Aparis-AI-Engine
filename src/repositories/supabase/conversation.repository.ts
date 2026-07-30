@@ -1,22 +1,56 @@
 import { createUserSupabaseClient } from '../../supabase/client.js';
-import { ForbiddenError, NotFoundError } from '../../utils/errors.js';
+import { ForbiddenError, NotFoundError, AppError } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
 import type { ChatMessage } from '../../types/index.js';
-import type { Tables, Json } from '../../supabase/database.types.js';
+import type { Tables } from '../../supabase/database.types.js';
 
 type ConversationRow = Tables<'conversations'>;
 type MessageRow = Tables<'conversation_messages'>;
 
+/** Log PostgREST/Supabase errors without JWTs or secrets. */
+function logSupabaseError(
+  context: string,
+  error: { code?: string; message?: string; details?: string; hint?: string } | null | undefined,
+): void {
+  logger.error(
+    {
+      context,
+      code: error?.code ?? null,
+      message: error?.message ?? null,
+      details: error?.details ?? null,
+      hint: error?.hint ?? null,
+    },
+    context,
+  );
+}
+
+function throwSupabaseError(
+  context: string,
+  error: { code?: string; message?: string; details?: string; hint?: string } | null | undefined,
+): never {
+  logSupabaseError(context, error);
+  throw new AppError(
+    error?.message ?? context,
+    502,
+    error?.code ?? 'SUPABASE_ERROR',
+    {
+      details: error?.details ?? null,
+      hint: error?.hint ?? null,
+    },
+  );
+}
+
 /**
  * Conversation storage via the caller's Supabase JWT under RLS.
- * Editors+ can insert/update; members can read (per aparis-ai-hub policies).
+ * Schema must match aparis-ai-hub `conversations` / `conversation_messages`
+ * (migration 20260730101432_…).
  */
 export class SupabaseConversationRepository {
   async createConversation(params: {
     accessToken: string;
     workspaceId: string;
     agentId: string;
-    createdBy: string;
+    startedBy: string;
     channel?: string;
     title?: string | null;
     /** Client-generated UUID for first-message create-if-absent flows. */
@@ -29,17 +63,15 @@ export class SupabaseConversationRepository {
         ...(params.id ? { id: params.id } : {}),
         workspace_id: params.workspaceId,
         agent_id: params.agentId,
-        created_by: params.createdBy,
+        started_by: params.startedBy,
         channel: params.channel ?? 'playground',
-        status: 'active',
-        title: params.title ?? null,
+        title: params.title?.trim() || 'New conversation',
       })
       .select('*')
       .single();
 
     if (error || !data) {
-      logger.warn({ code: error?.code }, 'Failed to create conversation');
-      throw new Error('Failed to create conversation');
+      throwSupabaseError('Failed to create conversation', error);
     }
     return data;
   }
@@ -55,15 +87,17 @@ export class SupabaseConversationRepository {
       .from('conversations')
       .select('*')
       .eq('id', params.conversationId)
-      .eq('workspace_id', params.workspaceId)
-      .is('deleted_at', null);
+      .eq('workspace_id', params.workspaceId);
 
     if (params.agentId) {
       query = query.eq('agent_id', params.agentId);
     }
 
     const { data, error } = await query.maybeSingle();
-    if (error) return null;
+    if (error) {
+      logSupabaseError('Failed to find conversation', error);
+      return null;
+    }
     return data;
   }
 
@@ -101,7 +135,10 @@ export class SupabaseConversationRepository {
       .order('created_at', { ascending: true })
       .limit(params.limit ?? 100);
 
-    if (error || !data) return [];
+    if (error || !data) {
+      if (error) logSupabaseError('Failed to list messages', error);
+      return [];
+    }
     return data.map((m) => ({
       role: m.role as ChatMessage['role'],
       content: m.content,
@@ -115,28 +152,24 @@ export class SupabaseConversationRepository {
     content: string;
     metadata?: Record<string, unknown>;
   }): Promise<MessageRow> {
-    const client = createUserSupabaseClient(params.accessToken);
+    const { accessToken, workspaceId, conversationId, content } = params;
+    const client = createUserSupabaseClient(accessToken);
     const { data, error } = await client
       .from('conversation_messages')
       .insert({
-        workspace_id: params.workspaceId,
-        conversation_id: params.conversationId,
+        workspace_id: workspaceId,
+        conversation_id: conversationId,
         role: 'user',
-        content: params.content,
-        metadata: (params.metadata ?? {}) as Json,
+        content,
+        is_error: false,
       })
       .select('*')
       .single();
 
     if (error || !data) {
-      logger.warn({ code: error?.code }, 'Failed to save user message');
-      throw new Error('Failed to save user message');
+      throwSupabaseError('Failed to save user message', error);
     }
-    await this.updateConversationTimestamp(
-      params.accessToken,
-      params.conversationId,
-      params.workspaceId,
-    );
+    await this.touchConversation(accessToken, conversationId, workspaceId);
     return data;
   }
 
@@ -150,31 +183,24 @@ export class SupabaseConversationRepository {
     responseTimeMs?: number;
     metadata?: Record<string, unknown>;
   }): Promise<MessageRow> {
-    const client = createUserSupabaseClient(params.accessToken);
+    const { accessToken, workspaceId, conversationId, content } = params;
+    const client = createUserSupabaseClient(accessToken);
     const { data, error } = await client
       .from('conversation_messages')
       .insert({
-        workspace_id: params.workspaceId,
-        conversation_id: params.conversationId,
+        workspace_id: workspaceId,
+        conversation_id: conversationId,
         role: 'assistant',
-        content: params.content,
-        model: params.model ?? null,
-        provider: params.provider ?? null,
-        response_time_ms: params.responseTimeMs ?? null,
-        metadata: (params.metadata ?? {}) as Json,
+        content,
+        is_error: false,
       })
       .select('*')
       .single();
 
     if (error || !data) {
-      logger.warn({ code: error?.code }, 'Failed to save assistant message');
-      throw new Error('Failed to save assistant message');
+      throwSupabaseError('Failed to save assistant message', error);
     }
-    await this.updateConversationTimestamp(
-      params.accessToken,
-      params.conversationId,
-      params.workspaceId,
-    );
+    await this.touchConversation(accessToken, conversationId, workspaceId);
     return data;
   }
 
@@ -185,35 +211,53 @@ export class SupabaseConversationRepository {
     errorCode?: string;
   }): Promise<void> {
     const client = createUserSupabaseClient(params.accessToken);
-    await client
-      .from('conversations')
-      .update({ status: 'error' })
-      .eq('id', params.conversationId)
-      .eq('workspace_id', params.workspaceId);
-
-    await client.from('conversation_messages').insert({
+    const { error } = await client.from('conversation_messages').insert({
       workspace_id: params.workspaceId,
       conversation_id: params.conversationId,
       role: 'system',
-      content: 'Generation failed',
-      metadata: {
-        failed: true,
-        errorCode: params.errorCode ?? 'AI_UNAVAILABLE',
-      } as Json,
+      content: params.errorCode
+        ? `Generation failed (${params.errorCode})`
+        : 'Generation failed',
+      is_error: true,
     });
+
+    if (error) {
+      logSupabaseError('Failed to mark generation failed', error);
+    }
+
+    await this.touchConversation(
+      params.accessToken,
+      params.conversationId,
+      params.workspaceId,
+    );
   }
 
-  async updateConversationTimestamp(
+  /** Hub uses last_message_at (not status / soft-delete). */
+  async touchConversation(
     accessToken: string,
     conversationId: string,
     workspaceId: string,
   ): Promise<void> {
     const client = createUserSupabaseClient(accessToken);
-    await client
+    const now = new Date().toISOString();
+    const { error } = await client
       .from('conversations')
-      .update({ updated_at: new Date().toISOString(), status: 'active' })
+      .update({ last_message_at: now, updated_at: now })
       .eq('id', conversationId)
       .eq('workspace_id', workspaceId);
+
+    if (error) {
+      logSupabaseError('Failed to touch conversation', error);
+    }
+  }
+
+  /** @deprecated Prefer touchConversation — kept for call-site compatibility. */
+  async updateConversationTimestamp(
+    accessToken: string,
+    conversationId: string,
+    workspaceId: string,
+  ): Promise<void> {
+    return this.touchConversation(accessToken, conversationId, workspaceId);
   }
 
   async generateConversationTitle(params: {
@@ -224,12 +268,16 @@ export class SupabaseConversationRepository {
   }): Promise<string> {
     const title = params.firstMessage.trim().slice(0, 80) || 'New conversation';
     const client = createUserSupabaseClient(params.accessToken);
-    await client
+    const { error } = await client
       .from('conversations')
       .update({ title })
       .eq('id', params.conversationId)
       .eq('workspace_id', params.workspaceId)
-      .is('title', null);
+      .eq('title', 'New conversation');
+
+    if (error) {
+      logSupabaseError('Failed to generate conversation title', error);
+    }
     return title;
   }
 }

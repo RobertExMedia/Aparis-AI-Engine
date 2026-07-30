@@ -80,9 +80,19 @@ Unique `(workspace_id, user_id)`.
 **Unavailable for chat:** `status = 'archived'` (or `archived_at` set).  
 Draft agents are allowed for workspace playground chat.
 
-### Conversation tables (did not exist — added by Engine migration)
+### Conversation tables (hub migration `20260730101432_…`)
 
-See migration in `aparis-ai-hub/supabase/migrations/` for `conversations` and `conversation_messages`.
+**`conversations` columns (actual):**
+`id`, `workspace_id`, `agent_id`, `title`, `channel`, `started_by`, `last_message_at`, `created_at`, `updated_at`
+
+There is **no** `created_by`, `status`, or `deleted_at` on this table.
+
+**`conversation_messages` columns (actual):**
+`id`, `conversation_id`, `workspace_id`, `role`, `content`, `is_error`, `token_count`, `created_at`, `updated_at`
+
+There is **no** `model`, `provider`, `response_time_ms`, or `metadata`.
+
+See hub migration `aparis-ai-hub/supabase/migrations/20260730101432_541f42f2-fcec-4c4a-9d5f-d3a40e0d0f8f.sql`.
 
 ## Not duplicated in Engine Prisma
 

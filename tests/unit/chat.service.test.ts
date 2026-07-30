@@ -78,6 +78,7 @@ vi.mock('../../src/repositories/supabase/conversation.repository.js', () => ({
     markGenerationFailed,
     generateConversationTitle: vi.fn().mockResolvedValue('Title'),
     updateConversationTimestamp: vi.fn(),
+    touchConversation: vi.fn(),
   },
 }));
 
@@ -110,8 +111,8 @@ describe('ChatService', () => {
       id: '00000000-0000-4000-8000-0000000000cc',
       workspace_id: baseRequest.workspaceId,
       agent_id: baseRequest.agentId,
-      title: null,
-      created_by: 'user-1',
+      title: 'New conversation',
+      started_by: 'user-1',
     });
     findConversation.mockResolvedValue(null);
     listMessages.mockResolvedValue([]);
@@ -140,7 +141,14 @@ describe('ChatService', () => {
       userId: 'user-1',
       accessToken: 'tok',
     });
-    expect(createConversation).toHaveBeenCalled();
+    expect(createConversation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        startedBy: 'user-1',
+        workspaceId: baseRequest.workspaceId,
+        agentId: baseRequest.agentId,
+      }),
+    );
+    expect(createConversation.mock.calls[0]?.[0]).not.toHaveProperty('id');
   });
 
   it('creates conversation when client sends a new conversationId', async () => {
@@ -150,8 +158,8 @@ describe('ChatService', () => {
       id: conversationId,
       workspace_id: baseRequest.workspaceId,
       agent_id: baseRequest.agentId,
-      title: null,
-      created_by: 'user-1',
+      title: 'New conversation',
+      started_by: 'user-1',
     });
 
     const result = await service.chat({
@@ -165,7 +173,7 @@ describe('ChatService', () => {
         id: conversationId,
         workspaceId: baseRequest.workspaceId,
         agentId: baseRequest.agentId,
-        createdBy: 'user-1',
+        startedBy: 'user-1',
       }),
     );
     expect(result.conversationId).toBe(conversationId);
@@ -178,7 +186,7 @@ describe('ChatService', () => {
       workspace_id: baseRequest.workspaceId,
       agent_id: baseRequest.agentId,
       title: 'Existing',
-      created_by: 'user-1',
+      started_by: 'user-1',
     });
 
     await service.chat({
@@ -199,7 +207,7 @@ describe('ChatService', () => {
       workspace_id: baseRequest.workspaceId,
       agent_id: baseRequest.agentId,
       title: 'Existing',
-      created_by: 'user-1',
+      started_by: 'user-1',
     });
 
     await expect(

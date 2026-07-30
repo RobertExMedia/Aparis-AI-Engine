@@ -70,7 +70,7 @@ export class ChatService {
       metadata: { requestId },
     });
 
-    if (!conversation.title) {
+    if (!conversation.title || conversation.title === 'New conversation') {
       void supabaseConversationRepository.generateConversationTitle({
         accessToken,
         conversationId: conversation.id,
@@ -228,7 +228,7 @@ export class ChatService {
         metadata: { requestId },
       });
 
-      if (!conversation.title) {
+      if (!conversation.title || conversation.title === 'New conversation') {
         void supabaseConversationRepository.generateConversationTitle({
           accessToken,
           conversationId: conversation.id,
@@ -376,7 +376,7 @@ export class ChatService {
         if (existing.agent_id !== agent.id) {
           throw new ForbiddenError();
         }
-        if (existing.created_by && existing.created_by !== userId) {
+        if (existing.started_by && existing.started_by !== userId) {
           throw new ForbiddenError();
         }
         return existing;
@@ -388,7 +388,7 @@ export class ChatService {
         id: request.conversationId,
         workspaceId: request.workspaceId,
         agentId: agent.id,
-        createdBy: userId,
+        startedBy: userId,
         channel: 'playground',
       });
     }
@@ -397,7 +397,7 @@ export class ChatService {
       accessToken,
       workspaceId: request.workspaceId,
       agentId: agent.id,
-      createdBy: userId,
+      startedBy: userId,
       channel: 'playground',
     });
   }
