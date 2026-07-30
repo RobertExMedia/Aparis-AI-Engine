@@ -6,20 +6,20 @@ const {
   chatMock,
   streamChatMock,
   createConversation,
+  findConversation,
   listMessages,
   saveUserMessage,
   saveAssistantMessage,
   markGenerationFailed,
-  verifyConversationAccess,
 } = vi.hoisted(() => ({
   chatMock: vi.fn(),
   streamChatMock: vi.fn(),
   createConversation: vi.fn(),
+  findConversation: vi.fn(),
   listMessages: vi.fn(),
   saveUserMessage: vi.fn(),
   saveAssistantMessage: vi.fn(),
   markGenerationFailed: vi.fn(),
-  verifyConversationAccess: vi.fn(),
 }));
 
 vi.mock('../../src/providers/index.js', () => ({
@@ -71,7 +71,7 @@ vi.mock('../../src/repositories/supabase/agent.repository.js', () => ({
 vi.mock('../../src/repositories/supabase/conversation.repository.js', () => ({
   supabaseConversationRepository: {
     createConversation,
-    verifyConversationAccess,
+    findConversation,
     listMessages,
     saveUserMessage,
     saveAssistantMessage,
@@ -111,25 +111,13 @@ describe('ChatService', () => {
       workspace_id: baseRequest.workspaceId,
       agent_id: baseRequest.agentId,
       title: null,
+      created_by: 'user-1',
     });
+    findConversation.mockResolvedValue(null);
     listMessages.mockResolvedValue([]);
     saveUserMessage.mockResolvedValue({});
     saveAssistantMessage.mockResolvedValue({});
     markGenerationFailed.mockResolvedValue(undefined);
-    verifyConversationAccess.mockImplementation(
-      async (p: { conversationId: string; workspaceId: string; agentId: string }) => {
-        if (p.workspaceId !== baseRequest.workspaceId) {
-          const { ForbiddenError } = await import('../../src/utils/errors.js');
-          throw new ForbiddenError();
-        }
-        return {
-          id: p.conversationId,
-          workspace_id: p.workspaceId,
-          agent_id: p.agentId,
-          title: 'Existing',
-        };
-      },
-    );
   });
 
   it('completes a valid chat request and stores messages', async () => {
@@ -155,19 +143,65 @@ describe('ChatService', () => {
     expect(createConversation).toHaveBeenCalled();
   });
 
+  it('creates conversation when client sends a new conversationId', async () => {
+    const conversationId = '00000000-0000-4000-8000-0000000000ff';
+    findConversation.mockResolvedValue(null);
+    createConversation.mockResolvedValue({
+      id: conversationId,
+      workspace_id: baseRequest.workspaceId,
+      agent_id: baseRequest.agentId,
+      title: null,
+      created_by: 'user-1',
+    });
+
+    const result = await service.chat({
+      request: { ...baseRequest, conversationId },
+      userId: 'user-1',
+      accessToken: 'tok',
+    });
+
+    expect(createConversation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: conversationId,
+        workspaceId: baseRequest.workspaceId,
+        agentId: baseRequest.agentId,
+        createdBy: 'user-1',
+      }),
+    );
+    expect(result.conversationId).toBe(conversationId);
+  });
+
   it('loads history for existing conversation', async () => {
+    const conversationId = '00000000-0000-4000-8000-0000000000cc';
+    findConversation.mockResolvedValue({
+      id: conversationId,
+      workspace_id: baseRequest.workspaceId,
+      agent_id: baseRequest.agentId,
+      title: 'Existing',
+      created_by: 'user-1',
+    });
+
     await service.chat({
       request: {
         ...baseRequest,
-        conversationId: '00000000-0000-4000-8000-0000000000cc',
+        conversationId,
       },
       userId: 'user-1',
       accessToken: 'tok',
     });
+    expect(createConversation).not.toHaveBeenCalled();
     expect(listMessages).toHaveBeenCalled();
   });
 
   it('isolates cross-workspace conversations', async () => {
+    findConversation.mockResolvedValue({
+      id: '00000000-0000-4000-8000-0000000000cc',
+      workspace_id: baseRequest.workspaceId,
+      agent_id: baseRequest.agentId,
+      title: 'Existing',
+      created_by: 'user-1',
+    });
+
     await expect(
       service.chat({
         request: {

@@ -19,11 +19,14 @@ export class SupabaseConversationRepository {
     createdBy: string;
     channel?: string;
     title?: string | null;
+    /** Client-generated UUID for first-message create-if-absent flows. */
+    id?: string;
   }): Promise<ConversationRow> {
     const client = createUserSupabaseClient(params.accessToken);
     const { data, error } = await client
       .from('conversations')
       .insert({
+        ...(params.id ? { id: params.id } : {}),
         workspace_id: params.workspaceId,
         agent_id: params.agentId,
         created_by: params.createdBy,

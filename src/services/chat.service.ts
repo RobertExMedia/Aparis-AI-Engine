@@ -6,7 +6,7 @@ import { supabaseConversationRepository } from '../repositories/supabase/convers
 import { workspaceAuthorizationService } from './workspace-authorization.service.js';
 import { promptBuilder } from './prompt-builder.service.js';
 import { knowledgeService } from './knowledge.service.js';
-import { ValidationError, AiUnavailableError } from '../utils/errors.js';
+import { ValidationError, AiUnavailableError, ForbiddenError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import type {
   AgentConfiguration,
@@ -363,11 +363,33 @@ export class ChatService {
     const { request, userId, agent, accessToken } = params;
 
     if (request.conversationId) {
-      return supabaseConversationRepository.verifyConversationAccess({
+      const existing = await supabaseConversationRepository.findConversation({
         accessToken,
         conversationId: request.conversationId,
         workspaceId: request.workspaceId,
+      });
+
+      if (existing) {
+        if (existing.workspace_id !== request.workspaceId) {
+          throw new ForbiddenError();
+        }
+        if (existing.agent_id !== agent.id) {
+          throw new ForbiddenError();
+        }
+        if (existing.created_by && existing.created_by !== userId) {
+          throw new ForbiddenError();
+        }
+        return existing;
+      }
+
+      // Client-supplied UUID for a new conversation — create then continue.
+      return supabaseConversationRepository.createConversation({
+        accessToken,
+        id: request.conversationId,
+        workspaceId: request.workspaceId,
         agentId: agent.id,
+        createdBy: userId,
+        channel: 'playground',
       });
     }
 
