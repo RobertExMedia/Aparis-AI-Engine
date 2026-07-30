@@ -96,4 +96,3 @@ Local Prisma may still hold operational usage logs / future server API keys — 
 | Dedicated `model` column on agents | **Missing** — use Engine `OLLAMA_CHAT_MODEL`; optionally `settings.model` if present and allowlisted |
 | Conversation tables already exist | **Did not** — migration created |
 | Hub anon key name | Hub uses `SUPABASE_PUBLISHABLE_KEY`; Engine env uses `SUPABASE_ANON_KEY` for the same value |
-| Zebra Plates schema | **Irrelevant** — never used |
