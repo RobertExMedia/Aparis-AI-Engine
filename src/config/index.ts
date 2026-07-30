@@ -64,7 +64,6 @@ function requireInProd(name: string, value: string | undefined): string {
     const defaults: Record<string, string> = {
       SUPABASE_URL: 'https://example.supabase.co',
       SUPABASE_ANON_KEY: 'test-anon-key',
-      SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
       DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
       REDIS_URL: 'redis://localhost:6379',
       JWT_SECRET: 'test-jwt-secret-32-characters!!',
@@ -80,7 +79,6 @@ function requireInProd(name: string, value: string | undefined): string {
   const devDefaults: Record<string, string> = {
     SUPABASE_URL: 'https://example.supabase.co',
     SUPABASE_ANON_KEY: 'dev-anon-key-replace-me',
-    SUPABASE_SERVICE_ROLE_KEY: 'dev-service-role-key-replace-me',
     DATABASE_URL: 'postgresql://aparis:aparis@localhost:5432/aparis_ai_engine?schema=public',
     REDIS_URL: 'redis://localhost:6379',
     JWT_SECRET: 'dev-jwt-secret-change-me-32chars',
