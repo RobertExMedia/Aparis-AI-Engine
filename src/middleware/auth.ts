@@ -4,11 +4,44 @@ import { config } from '../config/index.js';
 import { hashApiKey, safeCompare } from '../utils/crypto.js';
 import { UnauthorizedError, ForbiddenError } from '../utils/errors.js';
 import { prisma } from '../config/database.js';
+import { logger } from '../utils/logger.js';
 import type { ApiKeyAuthContext, AuthContext } from '../types/index.js';
 
 function extractBearer(header?: string): string | null {
   if (!header?.startsWith('Bearer ')) return null;
   return header.slice(7).trim() || null;
+}
+
+/** Same verification path as src/cli/verify-api-key.ts (no trim / transform). */
+function matchesEnvApiKeyHash(apiKey: string): boolean {
+  const envHash = process.env.API_KEY_HASHED ?? '';
+  return (
+    apiKey.length > 0 &&
+    envHash.length > 0 &&
+    safeCompare(hashApiKey(apiKey), envHash)
+  );
+}
+
+/** Temporary diagnostic — lengths / booleans only; never log secrets or hashes. */
+function logApiKeyAuthDebug(apiKey: string | undefined): void {
+  const headerPresent = typeof apiKey === 'string' && apiKey.length > 0;
+  const key = headerPresent ? apiKey! : '';
+  const envHash = process.env.API_KEY_HASHED ?? '';
+  const computedHash = headerPresent ? hashApiKey(key) : '';
+  const matches =
+    headerPresent &&
+    envHash.length > 0 &&
+    safeCompare(computedHash, envHash);
+
+  logger.info({
+    msg: 'api_key_auth_debug',
+    headerPresent,
+    headerLength: key.length,
+    envHashPresent: envHash.length > 0,
+    envHashLength: envHash.length,
+    computedHashLength: computedHash.length,
+    matches,
+  });
 }
 
 /**
@@ -66,6 +99,16 @@ function isMasterApiKey(apiKey: string): boolean {
 }
 
 async function authenticateApiKey(apiKey: string): Promise<ApiKeyAuthContext | null> {
+  // Env-hashed key — identical to verify-api-key.ts
+  if (matchesEnvApiKeyHash(apiKey)) {
+    return {
+      method: 'api_key',
+      workspaceId: '',
+      isAdmin: true,
+      role: 'ADMIN',
+    };
+  }
+
   if (isMasterApiKey(apiKey)) {
     return {
       method: 'api_key',
@@ -110,6 +153,7 @@ export async function authenticateApiKeyOnly(
 ): Promise<void> {
   const apiKeyHeader = request.headers['x-api-key'];
   if (typeof apiKeyHeader === 'string' && apiKeyHeader.length > 0) {
+    logApiKeyAuthDebug(apiKeyHeader);
     const ctx = await authenticateApiKey(apiKeyHeader);
     if (!ctx) throw new UnauthorizedError('Invalid API key');
     request.auth = ctx;
@@ -117,13 +161,15 @@ export async function authenticateApiKeyOnly(
   }
 
   const bearer = extractBearer(request.headers.authorization);
-  if (bearer && (bearer.startsWith('apk_') || isMasterApiKey(bearer))) {
+  if (bearer && (bearer.startsWith('apk_') || isMasterApiKey(bearer) || matchesEnvApiKeyHash(bearer))) {
+    logApiKeyAuthDebug(bearer);
     const ctx = await authenticateApiKey(bearer);
     if (!ctx) throw new UnauthorizedError('Invalid API key');
     request.auth = ctx;
     return;
   }
 
+  logApiKeyAuthDebug(undefined);
   throw new UnauthorizedError('API key required');
 }
 
@@ -137,7 +183,7 @@ export async function authenticate(
     return authenticateApiKeyOnly(request, reply);
   }
   const bearer = extractBearer(request.headers.authorization);
-  if (bearer?.startsWith('apk_') || (bearer && isMasterApiKey(bearer))) {
+  if (bearer?.startsWith('apk_') || (bearer && (isMasterApiKey(bearer) || matchesEnvApiKeyHash(bearer)))) {
     return authenticateApiKeyOnly(request, reply);
   }
   return authenticateSupabaseUser(request, reply);
