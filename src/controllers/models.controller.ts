@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { config } from '../config/index.js';
 import { modelsService } from '../services/models.service.js';
 
 export class ModelsController {
@@ -6,8 +7,8 @@ export class ModelsController {
     const models = await modelsService.list();
     return reply.status(200).send({
       models,
-      defaultChatModel: process.env.OLLAMA_CHAT_MODEL ?? 'deepseek-r1:latest',
-      defaultEmbedModel: process.env.OLLAMA_EMBED_MODEL ?? 'nomic-embed-text',
+      defaultChatModel: config.ollama.chatModel,
+      defaultEmbedModel: config.ollama.embedModel,
     });
   }
 }

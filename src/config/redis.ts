@@ -1,4 +1,4 @@
-import Redis from 'ioredis';
+import { Redis } from 'ioredis';
 import { config } from './index.js';
 import { logger } from '../utils/logger.js';
 
@@ -16,7 +16,7 @@ if (!config.isProd) {
   globalForRedis.redis = redis;
 }
 
-redis.on('error', (err) => {
+redis.on('error', (err: Error) => {
   logger.error({ err }, 'Redis connection error');
 });
 

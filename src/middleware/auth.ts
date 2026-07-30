@@ -2,25 +2,27 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config/index.js';
 import { prisma } from '../config/database.js';
 import { hashApiKey, safeCompare } from '../utils/crypto.js';
+import { verifyJwt } from '../utils/jwt.js';
 import { ForbiddenError, UnauthorizedError, WorkspaceMismatchError } from '../utils/errors.js';
-import type { AuthContext, AuthRole, JwtPayload } from '../types/index.js';
+import type { AuthContext, AuthRole } from '../types/index.js';
 
 function extractBearer(header?: string): string | null {
   if (!header?.startsWith('Bearer ')) return null;
   return header.slice(7).trim() || null;
 }
 
+function isMasterApiKey(apiKey: string): boolean {
+  return config.masterApiKeys.some((master) => safeCompare(master, apiKey));
+}
+
 async function authenticateApiKey(apiKey: string): Promise<AuthContext | null> {
-  // Master keys (bootstrap / service) — not workspace-scoped
-  for (const master of config.masterApiKeys) {
-    if (safeCompare(master, apiKey)) {
-      return {
-        workspaceId: '',
-        role: 'ADMIN',
-        method: 'api_key',
-        isAdmin: true,
-      };
-    }
+  if (isMasterApiKey(apiKey)) {
+    return {
+      workspaceId: '',
+      role: 'ADMIN',
+      method: 'api_key',
+      isAdmin: true,
+    };
   }
 
   const keyHash = hashApiKey(apiKey);
@@ -37,7 +39,6 @@ async function authenticateApiKey(apiKey: string): Promise<AuthContext | null> {
     return null;
   }
 
-  // Fire-and-forget last used update
   void prisma.apiKey
     .update({
       where: { id: record.id },
@@ -54,16 +55,10 @@ async function authenticateApiKey(apiKey: string): Promise<AuthContext | null> {
   };
 }
 
-async function authenticateJwt(
-  request: FastifyRequest,
-  token: string,
-  admin = false,
-): Promise<AuthContext | null> {
+function authenticateJwt(token: string, admin = false): AuthContext | null {
   try {
     const secret = admin ? config.jwt.adminSecret : config.jwt.secret;
-    const payload = request.server.jwt.verify<JwtPayload>(token, {
-      key: secret,
-    } as never);
+    const payload = verifyJwt(token, secret);
 
     if (admin && payload.type !== 'admin' && payload.role !== 'ADMIN') {
       return null;
@@ -89,44 +84,38 @@ export async function authenticate(
   _reply: FastifyReply,
 ): Promise<void> {
   const apiKeyHeader = request.headers['x-api-key'];
-  const apiKey =
-    typeof apiKeyHeader === 'string'
-      ? apiKeyHeader
-      : extractBearer(request.headers.authorization);
 
-  if (apiKey && (apiKey.startsWith('apk_') || config.masterApiKeys.includes(apiKey))) {
-    const ctx = await authenticateApiKey(apiKey);
+  if (typeof apiKeyHeader === 'string' && apiKeyHeader.length > 0) {
+    const ctx = await authenticateApiKey(apiKeyHeader);
     if (!ctx) throw new UnauthorizedError('Invalid API key');
     request.auth = ctx;
     return;
   }
 
   const bearer = extractBearer(request.headers.authorization);
-  if (bearer) {
-    const ctx = await authenticateJwt(request, bearer);
-    if (!ctx) throw new UnauthorizedError('Invalid or expired token');
+  if (!bearer) {
+    throw new UnauthorizedError('Authentication required');
+  }
+
+  if (bearer.startsWith('apk_') || isMasterApiKey(bearer)) {
+    const ctx = await authenticateApiKey(bearer);
+    if (!ctx) throw new UnauthorizedError('Invalid API key');
     request.auth = ctx;
     return;
   }
 
-  throw new UnauthorizedError('Authentication required');
+  const ctx =
+    authenticateJwt(bearer) ?? authenticateJwt(bearer, true);
+  if (!ctx) throw new UnauthorizedError('Invalid or expired token');
+  request.auth = ctx;
 }
 
 export async function requireAdmin(
   request: FastifyRequest,
-  _reply: FastifyReply,
+  reply: FastifyReply,
 ): Promise<void> {
-  await authenticate(request, _reply);
+  await authenticate(request, reply);
   if (!request.auth?.isAdmin) {
-    // Try admin JWT secret specifically
-    const bearer = extractBearer(request.headers.authorization);
-    if (bearer) {
-      const adminCtx = await authenticateJwt(request, bearer, true);
-      if (adminCtx?.isAdmin) {
-        request.auth = adminCtx;
-        return;
-      }
-    }
     throw new ForbiddenError('Admin access required');
   }
 }

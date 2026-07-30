@@ -4,7 +4,7 @@ import type {
   EmbeddingRequest,
   EmbeddingResponse,
   TokenUsage,
-} from '../../types/index.js';
+} from '../types/index.js';
 
 export interface ChatOptions {
   model?: string;
