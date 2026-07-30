@@ -82,6 +82,17 @@ vi.mock('../../src/repositories/supabase/conversation.repository.js', () => ({
   },
 }));
 
+vi.mock('../../src/services/knowledge-retrieval.service.js', () => ({
+  knowledgeRetrievalService: {
+    retrieve: vi.fn().mockResolvedValue({
+      texts: [],
+      citations: [],
+      payload: { used: false, sources: [] },
+    }),
+    buildGroundingBlock: vi.fn().mockReturnValue(undefined),
+  },
+}));
+
 vi.mock('../../src/services/knowledge.service.js', () => ({
   knowledgeService: {
     search: vi.fn().mockResolvedValue([]),

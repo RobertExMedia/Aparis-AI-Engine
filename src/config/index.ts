@@ -55,6 +55,15 @@ const envSchema = z.object({
 
   ALLOWED_ORIGINS: z.string().optional(),
   CORS_ORIGIN: z.string().optional(),
+
+  KNOWLEDGE_MAX_FILE_SIZE_BYTES: z.coerce.number().default(25 * 1024 * 1024),
+  KNOWLEDGE_MAX_FILES_PER_SOURCE: z.coerce.number().default(50),
+  KNOWLEDGE_MAX_PDF_PAGES: z.coerce.number().default(200),
+  KNOWLEDGE_MAX_EXTRACTED_CHARS: z.coerce.number().default(2_000_000),
+  KNOWLEDGE_MAX_CHUNKS_PER_SOURCE: z.coerce.number().default(5_000),
+  KNOWLEDGE_TOP_K: z.coerce.number().default(8),
+  KNOWLEDGE_SIMILARITY_THRESHOLD: z.coerce.number().default(0.25),
+  KNOWLEDGE_PROCESS_SYNC_MAX_BYTES: z.coerce.number().default(512 * 1024),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -177,6 +186,18 @@ export const config = {
   rateLimit: {
     max: env.RATE_LIMIT_MAX,
     windowMs: env.RATE_LIMIT_WINDOW_MS,
+  },
+
+  knowledge: {
+    maxFileSizeBytes: env.KNOWLEDGE_MAX_FILE_SIZE_BYTES,
+    maxFilesPerSource: env.KNOWLEDGE_MAX_FILES_PER_SOURCE,
+    maxPdfPages: env.KNOWLEDGE_MAX_PDF_PAGES,
+    maxExtractedCharacters: env.KNOWLEDGE_MAX_EXTRACTED_CHARS,
+    maxChunksPerSource: env.KNOWLEDGE_MAX_CHUNKS_PER_SOURCE,
+    topK: env.KNOWLEDGE_TOP_K,
+    similarityThreshold: env.KNOWLEDGE_SIMILARITY_THRESHOLD,
+    /** Process inline when total uploaded bytes are under this; else queue. */
+    processSyncMaxBytes: env.KNOWLEDGE_PROCESS_SYNC_MAX_BYTES,
   },
 
   allowedOrigins: allowedOriginsRaw

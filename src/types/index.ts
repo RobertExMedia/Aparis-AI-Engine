@@ -66,6 +66,21 @@ export interface DashboardChatResponse {
   provider: string;
   durationMs: number;
   usage?: TokenUsage;
+  knowledge?: {
+    used: boolean;
+    sources: Array<{
+      sourceId: string;
+      sourceName: string;
+      fileId?: string;
+      fileName?: string;
+      page?: number;
+      sheet?: string;
+      slide?: number;
+      url?: string;
+      chunkId: string;
+      similarity: number;
+    }>;
+  };
 }
 
 export interface EmbeddingRequest {

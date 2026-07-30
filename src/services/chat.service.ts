@@ -5,9 +5,10 @@ import { supabaseAgentRepository } from '../repositories/supabase/agent.reposito
 import { supabaseConversationRepository } from '../repositories/supabase/conversation.repository.js';
 import { workspaceAuthorizationService } from './workspace-authorization.service.js';
 import { promptBuilder } from './prompt-builder.service.js';
-import { knowledgeService } from './knowledge.service.js';
+import { knowledgeRetrievalService } from './knowledge-retrieval.service.js';
 import { ValidationError, AiUnavailableError, ForbiddenError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import type { ChatKnowledgePayload } from '../knowledge/types.js';
 import type {
   AgentConfiguration,
   DashboardChatRequest,
@@ -139,6 +140,7 @@ export class ChatService {
         provider: provider.name,
         durationMs,
         usage: result.usage,
+        knowledge: built.knowledge,
       };
     } catch (err) {
       // Persist the user turn even when generation fails so history stays continuous.
@@ -193,6 +195,7 @@ export class ChatService {
           conversationId: string;
           durationMs: number;
           model: string;
+          knowledge?: ChatKnowledgePayload;
         };
       }
     | { event: 'error'; data: { message: string } }
@@ -327,6 +330,7 @@ export class ChatService {
           provider: provider.name,
           historyMessageCount: built.historyMessageCount,
           ollamaMessageCount: built.messages.length,
+          knowledgeUsed: built.knowledge.used,
           durationMs,
           success: true,
         },
@@ -340,6 +344,7 @@ export class ChatService {
           conversationId: conversation.id,
           durationMs,
           model: finalModel,
+          knowledge: built.knowledge,
         },
       };
     } catch (err) {
@@ -357,8 +362,8 @@ export class ChatService {
   }
 
   /**
-   * Load prior turns (created_at ASC), then assemble Ollama messages:
-   * system (+ knowledge) → prior user/assistant → current user message.
+   * Load prior turns (created_at ASC), retrieve agent knowledge, then assemble Ollama messages:
+   * system → knowledge context → prior user/assistant → current user message.
    */
   private async buildOllamaMessages(params: {
     request: DashboardChatRequest;
@@ -366,7 +371,11 @@ export class ChatService {
     accessToken: string;
     conversationId: string;
     requestId: string;
-  }): Promise<{ messages: ChatMessage[]; historyMessageCount: number }> {
+  }): Promise<{
+    messages: ChatMessage[];
+    historyMessageCount: number;
+    knowledge: ChatKnowledgePayload;
+  }> {
     const { request, agent, accessToken, conversationId, requestId } = params;
 
     const history = await supabaseConversationRepository.listMessages({
@@ -379,16 +388,16 @@ export class ChatService {
       (m) => m.role === 'user' || m.role === 'assistant',
     );
 
-    const knowledgeDocs = await knowledgeService.search({
+    const retrieved = await knowledgeRetrievalService.retrieve({
+      accessToken,
       workspaceId: request.workspaceId,
-      query: request.message,
       agentId: agent.id,
-      limit: 5,
+      query: request.message,
     });
 
     const built = promptBuilder.build({
       systemPrompt: agent.system_prompt,
-      knowledge: knowledgeDocs.map((d) => d.content),
+      knowledgeContext: knowledgeRetrievalService.buildGroundingBlock(retrieved.texts),
       conversation: priorTurns,
       currentQuestion: request.message,
     });
@@ -398,16 +407,19 @@ export class ChatService {
         requestId,
         conversationId,
         historyMessageCount: priorTurns.length,
+        knowledgeUsed: retrieved.payload.used,
+        knowledgeSourceCount: retrieved.citations.length,
         ollamaMessageCount: built.messages.length,
         hasSystem: built.messages.some((m) => m.role === 'system'),
         lastRole: built.messages.at(-1)?.role,
       },
-      'Prepared Ollama chat messages with conversation history',
+      'Prepared Ollama chat messages with conversation history and knowledge',
     );
 
     return {
       messages: built.messages,
       historyMessageCount: priorTurns.length,
+      knowledge: retrieved.payload,
     };
   }
 

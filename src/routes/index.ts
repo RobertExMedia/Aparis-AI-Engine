@@ -3,6 +3,7 @@ import { config } from '../config/index.js';
 import { chatRoutes } from './chat.routes.js';
 import { healthRoutes } from './health.routes.js';
 import { modelsRoutes } from './models.routes.js';
+import { knowledgeRoutes } from './knowledge.routes.js';
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.get(
@@ -35,6 +36,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       await api.register(healthRoutes);
       await api.register(chatRoutes);
       await api.register(modelsRoutes);
+      await api.register(knowledgeRoutes);
     },
     { prefix: '/api/v1' },
   );

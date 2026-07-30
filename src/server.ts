@@ -3,6 +3,7 @@ import { config, runStartupSecurityChecks } from './config/index.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
 import { connectRedis, disconnectRedis } from './config/redis.js';
 import { getAIProvider } from './providers/index.js';
+import { startKnowledgeWorker } from './workers/knowledge.worker.js';
 import { logger } from './utils/logger.js';
 
 async function main() {
@@ -11,7 +12,6 @@ async function main() {
   await connectDatabase();
   await connectRedis();
 
-  // Startup Ollama probe — logs config issues without exposing host details to clients
   const ollama = getAIProvider();
   const health = await ollama.health();
   if (!health.ok) {
@@ -23,11 +23,14 @@ async function main() {
     logger.info({ latencyMs: health.latencyMs }, 'Ollama health check OK');
   }
 
+  const knowledgeWorker = startKnowledgeWorker();
+
   const app = await buildApp();
 
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutting down');
     try {
+      await knowledgeWorker?.close();
       await app.close();
       await disconnectRedis();
       await disconnectDatabase();

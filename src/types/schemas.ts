@@ -61,6 +61,13 @@ export const dashboardChatResponseJsonSchema = {
         totalTokens: { type: 'integer' },
       },
     },
+    knowledge: {
+      type: 'object',
+      properties: {
+        used: { type: 'boolean' },
+        sources: { type: 'array', items: { type: 'object', additionalProperties: true } },
+      },
+    },
   },
 } as const;
 

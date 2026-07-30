@@ -17,7 +17,8 @@ describe('PromptBuilder', () => {
 
     expect(result.messages[0]?.role).toBe('system');
     expect(result.messages[0]?.content).toContain('helpful assistant');
-    expect(result.messages[0]?.content).toContain('Product X costs $10');
+    expect(result.messages[1]?.role).toBe('system');
+    expect(result.messages[1]?.content).toContain('Product X costs $10');
     expect(result.messages.at(-1)?.role).toBe('user');
     expect(result.messages.at(-1)?.content).toBe('How much is Product X?');
     expect(result.finalPrompt).toContain('[SYSTEM]');
