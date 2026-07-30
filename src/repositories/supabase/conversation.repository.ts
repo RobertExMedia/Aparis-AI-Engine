@@ -129,17 +129,17 @@ export class SupabaseConversationRepository {
     const client = createUserSupabaseClient(params.accessToken);
     const { data, error } = await client
       .from('conversation_messages')
-      .select('role, content')
+      .select('role, content, created_at')
       .eq('conversation_id', params.conversationId)
       .eq('workspace_id', params.workspaceId)
       .order('created_at', { ascending: true })
-      .limit(params.limit ?? 100);
+      .limit(params.limit ?? 200);
 
-    if (error || !data) {
-      if (error) logSupabaseError('Failed to list messages', error);
-      return [];
+    if (error) {
+      throwSupabaseError('Failed to list conversation messages', error);
     }
-    return data.map((m) => ({
+
+    return (data ?? []).map((m) => ({
       role: m.role as ChatMessage['role'],
       content: m.content,
     }));

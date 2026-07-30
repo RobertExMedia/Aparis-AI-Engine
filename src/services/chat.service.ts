@@ -62,14 +62,6 @@ export class ChatService {
       accessToken,
     });
 
-    await supabaseConversationRepository.saveUserMessage({
-      accessToken,
-      workspaceId: request.workspaceId,
-      conversationId: conversation.id,
-      content: request.message,
-      metadata: { requestId },
-    });
-
     if (!conversation.title || conversation.title === 'New conversation') {
       void supabaseConversationRepository.generateConversationTitle({
         accessToken,
@@ -79,24 +71,12 @@ export class ChatService {
       });
     }
 
-    const history = await supabaseConversationRepository.listMessages({
+    const built = await this.buildOllamaMessages({
+      request,
+      agent,
       accessToken,
       conversationId: conversation.id,
-      workspaceId: request.workspaceId,
-    });
-
-    const knowledgeDocs = await knowledgeService.search({
-      workspaceId: request.workspaceId,
-      query: request.message,
-      agentId: agent.id,
-      limit: 5,
-    });
-
-    const built = promptBuilder.build({
-      systemPrompt: agent.system_prompt,
-      knowledge: knowledgeDocs.map((d) => d.content),
-      conversation: history.filter((m) => m.role !== 'system'),
-      currentQuestion: request.message,
+      requestId,
     });
 
     const model = resolveModel(agent);
@@ -111,6 +91,14 @@ export class ChatService {
       });
 
       const durationMs = Date.now() - started;
+
+      await supabaseConversationRepository.saveUserMessage({
+        accessToken,
+        workspaceId: request.workspaceId,
+        conversationId: conversation.id,
+        content: request.message,
+        metadata: { requestId },
+      });
 
       await supabaseConversationRepository.saveAssistantMessage({
         accessToken,
@@ -135,6 +123,8 @@ export class ChatService {
           conversationId: conversation.id,
           model: result.model,
           provider: provider.name,
+          historyMessageCount: built.historyMessageCount,
+          ollamaMessageCount: built.messages.length,
           durationMs,
           success: true,
         },
@@ -151,6 +141,17 @@ export class ChatService {
         usage: result.usage,
       };
     } catch (err) {
+      // Persist the user turn even when generation fails so history stays continuous.
+      await supabaseConversationRepository
+        .saveUserMessage({
+          accessToken,
+          workspaceId: request.workspaceId,
+          conversationId: conversation.id,
+          content: request.message,
+          metadata: { requestId, failed: true },
+        })
+        .catch(() => undefined);
+
       await supabaseConversationRepository
         .markGenerationFailed({
           accessToken,
@@ -165,6 +166,7 @@ export class ChatService {
           requestId,
           workspaceId: request.workspaceId,
           agentId: agent.id,
+          conversationId: conversation.id,
           success: false,
           durationMs: Date.now() - started,
         },
@@ -220,14 +222,6 @@ export class ChatService {
         accessToken,
       });
 
-      await supabaseConversationRepository.saveUserMessage({
-        accessToken,
-        workspaceId: request.workspaceId,
-        conversationId: conversation.id,
-        content: request.message,
-        metadata: { requestId },
-      });
-
       if (!conversation.title || conversation.title === 'New conversation') {
         void supabaseConversationRepository.generateConversationTitle({
           accessToken,
@@ -242,24 +236,12 @@ export class ChatService {
         data: { requestId, conversationId: conversation.id },
       };
 
-      const history = await supabaseConversationRepository.listMessages({
+      const built = await this.buildOllamaMessages({
+        request,
+        agent,
         accessToken,
         conversationId: conversation.id,
-        workspaceId: request.workspaceId,
-      });
-
-      const knowledgeDocs = await knowledgeService.search({
-        workspaceId: request.workspaceId,
-        query: request.message,
-        agentId: agent.id,
-        limit: 5,
-      });
-
-      const built = promptBuilder.build({
-        systemPrompt: agent.system_prompt,
-        knowledge: knowledgeDocs.map((d) => d.content),
-        conversation: history.filter((m) => m.role !== 'system'),
-        currentQuestion: request.message,
+        requestId,
       });
 
       const model = resolveModel(agent);
@@ -284,6 +266,16 @@ export class ChatService {
 
       if (signal?.aborted) {
         await supabaseConversationRepository
+          .saveUserMessage({
+            accessToken,
+            workspaceId: request.workspaceId,
+            conversationId: conversation.id,
+            content: request.message,
+            metadata: { requestId, aborted: true },
+          })
+          .catch(() => undefined);
+
+        await supabaseConversationRepository
           .markGenerationFailed({
             accessToken,
             conversationId: conversation.id,
@@ -303,6 +295,14 @@ export class ChatService {
       if (final?.model) finalModel = final.model;
 
       const durationMs = Date.now() - started;
+
+      await supabaseConversationRepository.saveUserMessage({
+        accessToken,
+        workspaceId: request.workspaceId,
+        conversationId: conversation.id,
+        content: request.message,
+        metadata: { requestId },
+      });
 
       if (assistantContent) {
         await supabaseConversationRepository.saveAssistantMessage({
@@ -325,6 +325,8 @@ export class ChatService {
           conversationId: conversation.id,
           model: finalModel,
           provider: provider.name,
+          historyMessageCount: built.historyMessageCount,
+          ollamaMessageCount: built.messages.length,
           durationMs,
           success: true,
         },
@@ -352,6 +354,61 @@ export class ChatService {
       );
       throw err;
     }
+  }
+
+  /**
+   * Load prior turns (created_at ASC), then assemble Ollama messages:
+   * system (+ knowledge) → prior user/assistant → current user message.
+   */
+  private async buildOllamaMessages(params: {
+    request: DashboardChatRequest;
+    agent: AgentConfiguration;
+    accessToken: string;
+    conversationId: string;
+    requestId: string;
+  }): Promise<{ messages: ChatMessage[]; historyMessageCount: number }> {
+    const { request, agent, accessToken, conversationId, requestId } = params;
+
+    const history = await supabaseConversationRepository.listMessages({
+      accessToken,
+      conversationId,
+      workspaceId: request.workspaceId,
+    });
+
+    const priorTurns = history.filter(
+      (m) => m.role === 'user' || m.role === 'assistant',
+    );
+
+    const knowledgeDocs = await knowledgeService.search({
+      workspaceId: request.workspaceId,
+      query: request.message,
+      agentId: agent.id,
+      limit: 5,
+    });
+
+    const built = promptBuilder.build({
+      systemPrompt: agent.system_prompt,
+      knowledge: knowledgeDocs.map((d) => d.content),
+      conversation: priorTurns,
+      currentQuestion: request.message,
+    });
+
+    logger.info(
+      {
+        requestId,
+        conversationId,
+        historyMessageCount: priorTurns.length,
+        ollamaMessageCount: built.messages.length,
+        hasSystem: built.messages.some((m) => m.role === 'system'),
+        lastRole: built.messages.at(-1)?.role,
+      },
+      'Prepared Ollama chat messages with conversation history',
+    );
+
+    return {
+      messages: built.messages,
+      historyMessageCount: priorTurns.length,
+    };
   }
 
   private async resolveConversation(params: {

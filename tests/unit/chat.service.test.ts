@@ -201,6 +201,55 @@ describe('ChatService', () => {
     expect(listMessages).toHaveBeenCalled();
   });
 
+  it('sends prior turns so the third message can reference the first', async () => {
+    const conversationId = '00000000-0000-4000-8000-0000000000cc';
+    findConversation.mockResolvedValue({
+      id: conversationId,
+      workspace_id: baseRequest.workspaceId,
+      agent_id: baseRequest.agentId,
+      title: 'Existing',
+      started_by: 'user-1',
+    });
+    listMessages.mockResolvedValue([
+      { role: 'user', content: 'Who are you?' },
+      { role: 'assistant', content: 'I am a helpful assistant.' },
+      { role: 'user', content: 'What day is it?' },
+      { role: 'assistant', content: 'It is Thursday.' },
+    ]);
+
+    await service.chat({
+      request: {
+        ...baseRequest,
+        conversationId,
+        message: 'What was my first question?',
+      },
+      userId: 'user-1',
+      accessToken: 'tok',
+    });
+
+    expect(listMessages).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId, workspaceId: baseRequest.workspaceId }),
+    );
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    const sent = chatMock.mock.calls[0]?.[0] as ChatMessage[];
+    expect(sent[0]?.role).toBe('system');
+    expect(sent.some((m) => m.role === 'user' && m.content === 'Who are you?')).toBe(true);
+    expect(sent.some((m) => m.role === 'assistant' && m.content === 'I am a helpful assistant.')).toBe(
+      true,
+    );
+    expect(sent.at(-1)).toEqual({
+      role: 'user',
+      content: 'What was my first question?',
+    });
+    // History is loaded before persisting this turn
+    expect(listMessages.mock.invocationCallOrder[0]).toBeLessThan(
+      saveUserMessage.mock.invocationCallOrder[0],
+    );
+    expect(chatMock.mock.invocationCallOrder[0]).toBeLessThan(
+      saveUserMessage.mock.invocationCallOrder[0],
+    );
+  });
+
   it('isolates cross-workspace conversations', async () => {
     findConversation.mockResolvedValue({
       id: '00000000-0000-4000-8000-0000000000cc',
