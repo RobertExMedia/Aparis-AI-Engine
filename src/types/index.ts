@@ -1,15 +1,41 @@
-export type AuthRole = 'USER' | 'ADMIN' | 'SERVICE';
+export type AuthMethod = 'supabase' | 'api_key';
 
-export type AuthMethod = 'jwt' | 'api_key' | 'admin';
+export type WorkspaceRole = 'owner' | 'admin' | 'editor' | 'viewer';
 
-export interface AuthContext {
-  workspaceId: string;
+export type AgentStatus = 'draft' | 'published' | 'archived';
+
+export type AgentTone =
+  | 'professional'
+  | 'friendly'
+  | 'concise'
+  | 'enthusiastic'
+  | 'empathetic'
+  | 'technical';
+
+/** Supabase user identity attached by authenticateSupabaseUser */
+export interface SupabaseAuthContext {
+  method: 'supabase';
+  userId: string;
+  email?: string;
+  accessToken: string;
+  workspaceId?: string;
+  workspaceRole?: WorkspaceRole;
+  isAdmin?: boolean;
+}
+
+/** Trusted server-to-server API key context (not used for Hub playground). */
+export interface ApiKeyAuthContext {
+  method: 'api_key';
   userId?: string;
-  role: AuthRole;
-  method: AuthMethod;
+  email?: string;
+  accessToken?: string;
+  workspaceId: string;
   apiKeyId?: string;
   isAdmin: boolean;
+  role?: string;
 }
+
+export type AuthContext = SupabaseAuthContext | ApiKeyAuthContext;
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -17,24 +43,11 @@ export interface ChatMessage {
   name?: string;
 }
 
-export interface ChatRequest {
+export interface DashboardChatRequest {
   workspaceId: string;
-  agentId?: string;
+  agentId: string;
   conversationId?: string;
-  messages: ChatMessage[];
-  model?: string;
-  temperature?: number;
-  maxTokens?: number;
-  systemPrompt?: string;
-}
-
-export interface ChatResponse {
-  id: string;
-  conversationId: string;
-  message: ChatMessage;
-  model: string;
-  usage?: TokenUsage;
-  finishReason?: string;
+  message: string;
 }
 
 export interface TokenUsage {
@@ -43,12 +56,13 @@ export interface TokenUsage {
   totalTokens: number;
 }
 
-export interface StreamChunk {
-  id: string;
-  conversationId?: string;
-  delta: string;
-  done: boolean;
-  model?: string;
+export interface DashboardChatResponse {
+  requestId: string;
+  conversationId: string;
+  message: ChatMessage;
+  model: string;
+  provider: string;
+  durationMs: number;
   usage?: TokenUsage;
 }
 
@@ -77,6 +91,7 @@ export interface HealthCheckResult {
     database: ComponentHealth;
     redis: ComponentHealth;
     ollama: ComponentHealth;
+    supabase: ComponentHealth;
     disk: ComponentHealth;
     memory: ComponentHealth;
   };
@@ -91,11 +106,24 @@ export interface ComponentHealth {
   details?: Record<string, unknown>;
 }
 
-export interface JwtPayload {
-  sub: string;
-  workspaceId: string;
-  role: AuthRole;
-  type?: 'user' | 'admin';
+export interface AgentConfiguration {
+  id: string;
+  workspace_id: string;
+  public_id: string;
+  name: string;
+  description: string | null;
+  status: AgentStatus;
+  system_prompt: string;
+  greeting: string;
+  fallback_message: string;
+  language: string;
+  tone: AgentTone;
+  temperature: number;
+  max_tokens: number;
+  settings: Record<string, unknown>;
+  archived_at: string | null;
+  published_at: string | null;
+  avatar_url: string | null;
 }
 
 declare module 'fastify' {

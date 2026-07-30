@@ -21,20 +21,36 @@ export class AppError extends Error {
 }
 
 export class UnauthorizedError extends AppError {
-  constructor(message = 'Unauthorized') {
+  constructor(
+    message = 'Your session has expired. Please sign in again.',
+  ) {
     super(message, 401, 'UNAUTHORIZED');
   }
 }
 
 export class ForbiddenError extends AppError {
-  constructor(message = 'Forbidden') {
+  constructor(
+    message = 'You do not have permission to use this agent.',
+  ) {
     super(message, 403, 'FORBIDDEN');
+  }
+}
+
+export class AgentNotFoundError extends AppError {
+  constructor(message = 'This agent could not be found.') {
+    super(message, 404, 'AGENT_NOT_FOUND');
   }
 }
 
 export class NotFoundError extends AppError {
   constructor(message = 'Resource not found') {
     super(message, 404, 'NOT_FOUND');
+  }
+}
+
+export class AgentUnavailableError extends AppError {
+  constructor(message = 'This agent is not currently available.') {
+    super(message, 409, 'AGENT_UNAVAILABLE');
   }
 }
 
@@ -45,19 +61,27 @@ export class ValidationError extends AppError {
 }
 
 export class RateLimitError extends AppError {
-  constructor(message = 'Rate limit exceeded') {
-    super(message, 429, 'RATE_LIMIT_EXCEEDED');
+  constructor(message = 'Too many requests. Please try again shortly.') {
+    super(message, 429, 'RATE_LIMITED');
   }
 }
 
-export class ProviderError extends AppError {
-  constructor(message = 'AI provider error', details?: unknown) {
-    super(message, 502, 'PROVIDER_ERROR', details);
+export class AiUnavailableError extends AppError {
+  constructor(
+    message = 'The AI service is temporarily unavailable. Please try again shortly.',
+  ) {
+    super(message, 503, 'AI_UNAVAILABLE');
   }
 }
 
-export class WorkspaceMismatchError extends AppError {
-  constructor(message = 'Workspace access denied') {
-    super(message, 403, 'WORKSPACE_MISMATCH');
+export class ProviderError extends AiUnavailableError {
+  constructor(message = 'The AI service is temporarily unavailable. Please try again shortly.') {
+    super(message);
+  }
+}
+
+export class WorkspaceMismatchError extends ForbiddenError {
+  constructor(message = 'You do not have permission to use this agent.') {
+    super(message);
   }
 }

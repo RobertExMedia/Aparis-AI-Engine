@@ -11,6 +11,7 @@ export interface ChatOptions {
   temperature?: number;
   maxTokens?: number;
   systemPrompt?: string;
+  signal?: AbortSignal;
 }
 
 export interface ChatResult {

@@ -1,6 +1,6 @@
 import axios, { type AxiosInstance } from 'axios';
 import { config } from '../../config/index.js';
-import { ProviderError } from '../../utils/errors.js';
+import { AiUnavailableError } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
 import type {
   AIModelInfo,
@@ -40,11 +40,19 @@ interface OllamaEmbedResponse {
   embeddings?: number[][];
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class OllamaProvider implements AIProvider {
   readonly name = 'ollama';
   private readonly client: AxiosInstance;
   private readonly defaultChatModel: string;
   private readonly defaultEmbedModel: string;
+  private readonly chatEndpoint: string;
+  private readonly modelsEndpoint: string;
+  private readonly embeddingsEndpoint: string;
+  private configurationOk = true;
 
   constructor(
     baseUrl = config.ollama.baseUrl,
@@ -54,10 +62,14 @@ export class OllamaProvider implements AIProvider {
   ) {
     this.defaultChatModel = chatModel;
     this.defaultEmbedModel = embedModel;
+    this.chatEndpoint = config.ollama.chatEndpoint;
+    this.modelsEndpoint = config.ollama.modelsEndpoint;
+    this.embeddingsEndpoint = config.ollama.embeddingsEndpoint;
     this.client = axios.create({
       baseURL: baseUrl,
       timeout: timeoutMs,
       headers: { 'Content-Type': 'application/json' },
+      validateStatus: (s) => s >= 200 && s < 300,
     });
   }
 
@@ -66,15 +78,21 @@ export class OllamaProvider implements AIProvider {
     const payloadMessages = this.prepareMessages(messages, options.systemPrompt);
 
     try {
-      const { data } = await this.client.post<OllamaChatResponse>('/api/chat', {
-        model,
-        messages: payloadMessages,
-        stream: false,
-        options: {
-          temperature: options.temperature,
-          num_predict: options.maxTokens,
-        },
-      });
+      const { data } = await this.withRetry(() =>
+        this.client.post<OllamaChatResponse>(
+          this.chatEndpoint,
+          {
+            model,
+            messages: payloadMessages,
+            stream: false,
+            options: {
+              temperature: options.temperature,
+              num_predict: options.maxTokens,
+            },
+          },
+          { signal: options.signal },
+        ),
+      );
 
       return {
         message: {
@@ -101,7 +119,7 @@ export class OllamaProvider implements AIProvider {
     let response;
     try {
       response = await this.client.post(
-        '/api/chat',
+        this.chatEndpoint,
         {
           model,
           messages: payloadMessages,
@@ -111,7 +129,7 @@ export class OllamaProvider implements AIProvider {
             num_predict: options.maxTokens,
           },
         },
-        { responseType: 'stream' },
+        { responseType: 'stream', signal: options.signal },
       );
     } catch (err) {
       throw this.wrapError(err, 'streamChat');
@@ -125,57 +143,49 @@ export class OllamaProvider implements AIProvider {
     let completionTokens = 0;
     let finishReason: string | undefined;
 
-    for await (const chunk of stream) {
-      buffer += chunk.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-
-        let parsed: OllamaChatResponse;
-        try {
-          parsed = JSON.parse(trimmed) as OllamaChatResponse;
-        } catch {
-          logger.warn({ line: trimmed }, 'Failed to parse Ollama stream chunk');
-          continue;
-        }
-
-        const delta = parsed.message?.content ?? '';
-        if (delta) {
-          fullContent += delta;
-          options.onChunk?.(delta);
-          yield delta;
-        }
-
-        if (parsed.model) finalModel = parsed.model;
-        if (parsed.done) {
-          promptTokens = parsed.prompt_eval_count ?? 0;
-          completionTokens = parsed.eval_count ?? 0;
-          finishReason = parsed.done_reason ?? 'stop';
-        }
+    const onAbort = () => {
+      if (typeof (stream as { destroy?: () => void }).destroy === 'function') {
+        (stream as { destroy: () => void }).destroy();
       }
-    }
+    };
+    options.signal?.addEventListener('abort', onAbort);
 
-    if (buffer.trim()) {
-      try {
-        const parsed = JSON.parse(buffer.trim()) as OllamaChatResponse;
-        const delta = parsed.message?.content ?? '';
-        if (delta) {
-          fullContent += delta;
-          options.onChunk?.(delta);
-          yield delta;
-        }
-        if (parsed.done) {
-          promptTokens = parsed.prompt_eval_count ?? 0;
-          completionTokens = parsed.eval_count ?? 0;
-          finishReason = parsed.done_reason ?? 'stop';
+    try {
+      for await (const chunk of stream) {
+        if (options.signal?.aborted) break;
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+
+          let parsed: OllamaChatResponse;
+          try {
+            parsed = JSON.parse(trimmed) as OllamaChatResponse;
+          } catch {
+            logger.warn({ line: trimmed }, 'Failed to parse Ollama stream chunk');
+            continue;
+          }
+
+          const delta = parsed.message?.content ?? '';
+          if (delta) {
+            fullContent += delta;
+            options.onChunk?.(delta);
+            yield delta;
+          }
+
           if (parsed.model) finalModel = parsed.model;
+          if (parsed.done) {
+            promptTokens = parsed.prompt_eval_count ?? 0;
+            completionTokens = parsed.eval_count ?? 0;
+            finishReason = parsed.done_reason ?? 'stop';
+          }
         }
-      } catch {
-        // ignore trailing incomplete buffer
       }
+    } finally {
+      options.signal?.removeEventListener('abort', onAbort);
     }
 
     return {
@@ -195,22 +205,20 @@ export class OllamaProvider implements AIProvider {
     const inputs = Array.isArray(request.input) ? request.input : [request.input];
 
     try {
-      // Prefer /api/embed (newer Ollama); fall back to /api/embeddings
       try {
-        const { data } = await this.client.post<OllamaEmbedResponse>('/api/embed', {
-          model,
-          input: inputs,
-        });
-
+        const { data } = await this.client.post<OllamaEmbedResponse>(
+          this.embeddingsEndpoint,
+          { model, input: inputs },
+        );
         const embeddings = data.embeddings ?? (data.embedding ? [data.embedding] : []);
         return { embeddings, model };
       } catch {
         const embeddings: number[][] = [];
         for (const input of inputs) {
-          const { data } = await this.client.post<{ embedding: number[] }>('/api/embeddings', {
-            model,
-            prompt: input,
-          });
+          const { data } = await this.client.post<{ embedding: number[] }>(
+            this.embeddingsEndpoint,
+            { model, prompt: input },
+          );
           embeddings.push(data.embedding);
         }
         return { embeddings, model };
@@ -222,7 +230,7 @@ export class OllamaProvider implements AIProvider {
 
   async models(): Promise<AIModelInfo[]> {
     try {
-      const { data } = await this.client.get<OllamaTagsResponse>('/api/tags');
+      const { data } = await this.client.get<OllamaTagsResponse>(this.modelsEndpoint);
       return (data.models ?? []).map((m) => ({
         name: m.name,
         size: m.size,
@@ -238,16 +246,52 @@ export class OllamaProvider implements AIProvider {
   async health(): Promise<{ ok: boolean; latencyMs: number; message?: string }> {
     const start = Date.now();
     try {
-      await this.client.get('/api/tags', { timeout: 5_000 });
+      await this.client.get(this.modelsEndpoint, { timeout: 5_000 });
+      this.configurationOk = true;
       return { ok: true, latencyMs: Date.now() - start };
     } catch (err) {
+      this.configurationOk = false;
       const message = axios.isAxiosError(err)
-        ? err.message
-        : err instanceof Error
-          ? err.message
-          : 'Unknown error';
-      return { ok: false, latencyMs: Date.now() - start, message };
+        ? err.code === 'ECONNABORTED'
+          ? 'timeout'
+          : err.response?.status
+            ? `http_${err.response.status}`
+            : 'unreachable'
+        : 'unreachable';
+
+      // Clear config error in logs — never expose infrastructure URLs to API clients
+      logger.error(
+        {
+          operation: 'health',
+          reason: message,
+          endpointConfigured: true,
+        },
+        'Ollama health check failed. Verify OLLAMA_BASE_URL and that the AI host exposes the API paths. Do not expose the upstream URL to clients.',
+      );
+
+      return { ok: false, latencyMs: Date.now() - start, message: 'AI provider unreachable' };
     }
+  }
+
+  get isConfiguredHealthy(): boolean {
+    return this.configurationOk;
+  }
+
+  private async withRetry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
+    let lastErr: unknown;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastErr = err;
+        const retryable =
+          axios.isAxiosError(err) &&
+          (!err.response || err.response.status >= 500 || err.code === 'ECONNRESET');
+        if (!retryable || i === attempts - 1) throw err;
+        await sleep(200 * (i + 1));
+      }
+    }
+    throw lastErr;
   }
 
   private prepareMessages(messages: ChatMessage[], systemPrompt?: string): ChatMessage[] {
@@ -271,17 +315,22 @@ export class OllamaProvider implements AIProvider {
     };
   }
 
-  private wrapError(err: unknown, operation: string): ProviderError {
+  private wrapError(err: unknown, operation: string): AiUnavailableError {
     if (axios.isAxiosError(err)) {
       const status = err.response?.status;
-      const detail = err.response?.data ?? err.message;
-      logger.error({ err: detail, operation, status }, 'Ollama provider error');
-      return new ProviderError(`Ollama ${operation} failed`, {
-        status,
-        // Never leak raw provider internals to clients — kept for logs only
-      });
+      logger.error(
+        {
+          operation,
+          status,
+          code: err.code,
+          // never log full URL with secrets; axios may include baseURL — redact
+          message: err.message?.replace(/https?:\/\/[^\s]+/gi, '[redacted-host]'),
+        },
+        'Ollama provider error',
+      );
+      return new AiUnavailableError();
     }
     logger.error({ err, operation }, 'Ollama provider unexpected error');
-    return new ProviderError(`Ollama ${operation} failed`);
+    return new AiUnavailableError();
   }
 }
