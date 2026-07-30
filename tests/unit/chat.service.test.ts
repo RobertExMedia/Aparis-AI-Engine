@@ -2,8 +2,25 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { AiUnavailableError } from '../../src/utils/errors.js';
 import type { ChatMessage } from '../../src/types/index.js';
 
-const chatMock = vi.fn();
-const streamChatMock = vi.fn();
+const {
+  chatMock,
+  streamChatMock,
+  createConversation,
+  listMessages,
+  saveUserMessage,
+  saveAssistantMessage,
+  markGenerationFailed,
+  verifyConversationAccess,
+} = vi.hoisted(() => ({
+  chatMock: vi.fn(),
+  streamChatMock: vi.fn(),
+  createConversation: vi.fn(),
+  listMessages: vi.fn(),
+  saveUserMessage: vi.fn(),
+  saveAssistantMessage: vi.fn(),
+  markGenerationFailed: vi.fn(),
+  verifyConversationAccess: vi.fn(),
+}));
 
 vi.mock('../../src/providers/index.js', () => ({
   getAIProvider: () => ({
@@ -27,58 +44,38 @@ vi.mock('../../src/services/workspace-authorization.service.js', () => ({
   },
 }));
 
-const agentConfig = {
-  id: '00000000-0000-4000-8000-0000000000aa',
-  workspace_id: '00000000-0000-4000-8000-000000000001',
-  public_id: 'agt_test',
-  name: 'Agent',
-  description: null,
-  status: 'draft' as const,
-  system_prompt: 'Be concise',
-  greeting: 'Hi',
-  fallback_message: 'Fallback',
-  language: 'en',
-  tone: 'professional' as const,
-  temperature: 0.7,
-  max_tokens: 1024,
-  settings: {},
-  archived_at: null,
-  published_at: null,
-  avatar_url: null,
-};
-
 vi.mock('../../src/repositories/supabase/agent.repository.js', () => ({
   supabaseAgentRepository: {
-    loadAgentConfiguration: vi.fn().mockResolvedValue(agentConfig),
+    loadAgentConfiguration: vi.fn().mockResolvedValue({
+      id: '00000000-0000-4000-8000-0000000000aa',
+      workspace_id: '00000000-0000-4000-8000-000000000001',
+      public_id: 'agt_test',
+      name: 'Agent',
+      description: null,
+      status: 'draft',
+      system_prompt: 'Be concise',
+      greeting: 'Hi',
+      fallback_message: 'Fallback',
+      language: 'en',
+      tone: 'professional',
+      temperature: 0.7,
+      max_tokens: 1024,
+      settings: {},
+      archived_at: null,
+      published_at: null,
+      avatar_url: null,
+    }),
   },
 }));
-
-const createConversation = vi.fn().mockResolvedValue({
-  id: '00000000-0000-4000-8000-0000000000cc',
-  workspace_id: '00000000-0000-4000-8000-000000000001',
-  agent_id: '00000000-0000-4000-8000-0000000000aa',
-  title: null,
-});
 
 vi.mock('../../src/repositories/supabase/conversation.repository.js', () => ({
   supabaseConversationRepository: {
     createConversation,
-    verifyConversationAccess: vi.fn().mockImplementation(async (p) => {
-      if (p.workspaceId !== '00000000-0000-4000-8000-000000000001') {
-        const { ForbiddenError } = await import('../../src/utils/errors.js');
-        throw new ForbiddenError();
-      }
-      return {
-        id: p.conversationId,
-        workspace_id: p.workspaceId,
-        agent_id: p.agentId,
-        title: 'Existing',
-      };
-    }),
-    listMessages: vi.fn().mockResolvedValue([]),
-    saveUserMessage: vi.fn().mockResolvedValue({}),
-    saveAssistantMessage: vi.fn().mockResolvedValue({}),
-    markGenerationFailed: vi.fn().mockResolvedValue(undefined),
+    verifyConversationAccess,
+    listMessages,
+    saveUserMessage,
+    saveAssistantMessage,
+    markGenerationFailed,
     generateConversationTitle: vi.fn().mockResolvedValue('Title'),
     updateConversationTimestamp: vi.fn(),
   },
@@ -93,7 +90,6 @@ vi.mock('../../src/services/knowledge.service.js', () => ({
 }));
 
 import { ChatService } from '../../src/services/chat.service.js';
-import { supabaseConversationRepository } from '../../src/repositories/supabase/conversation.repository.js';
 
 describe('ChatService', () => {
   const service = new ChatService();
@@ -110,6 +106,30 @@ describe('ChatService', () => {
       model: 'deepseek-r1:1.5b',
       usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
     });
+    createConversation.mockResolvedValue({
+      id: '00000000-0000-4000-8000-0000000000cc',
+      workspace_id: baseRequest.workspaceId,
+      agent_id: baseRequest.agentId,
+      title: null,
+    });
+    listMessages.mockResolvedValue([]);
+    saveUserMessage.mockResolvedValue({});
+    saveAssistantMessage.mockResolvedValue({});
+    markGenerationFailed.mockResolvedValue(undefined);
+    verifyConversationAccess.mockImplementation(
+      async (p: { conversationId: string; workspaceId: string; agentId: string }) => {
+        if (p.workspaceId !== baseRequest.workspaceId) {
+          const { ForbiddenError } = await import('../../src/utils/errors.js');
+          throw new ForbiddenError();
+        }
+        return {
+          id: p.conversationId,
+          workspace_id: p.workspaceId,
+          agent_id: p.agentId,
+          title: 'Existing',
+        };
+      },
+    );
   });
 
   it('completes a valid chat request and stores messages', async () => {
@@ -122,8 +142,8 @@ describe('ChatService', () => {
     expect(result.message.content).toBe('Hi there');
     expect(result.provider).toBe('ollama');
     expect(result.conversationId).toBeTruthy();
-    expect(supabaseConversationRepository.saveUserMessage).toHaveBeenCalled();
-    expect(supabaseConversationRepository.saveAssistantMessage).toHaveBeenCalled();
+    expect(saveUserMessage).toHaveBeenCalled();
+    expect(saveAssistantMessage).toHaveBeenCalled();
   });
 
   it('creates conversation when conversationId omitted', async () => {
@@ -144,7 +164,7 @@ describe('ChatService', () => {
       userId: 'user-1',
       accessToken: 'tok',
     });
-    expect(supabaseConversationRepository.listMessages).toHaveBeenCalled();
+    expect(listMessages).toHaveBeenCalled();
   });
 
   it('isolates cross-workspace conversations', async () => {
@@ -170,7 +190,7 @@ describe('ChatService', () => {
         accessToken: 'tok',
       }),
     ).rejects.toBeInstanceOf(AiUnavailableError);
-    expect(supabaseConversationRepository.markGenerationFailed).toHaveBeenCalled();
+    expect(markGenerationFailed).toHaveBeenCalled();
   });
 
   it('streams tokens then done', async () => {
@@ -216,6 +236,6 @@ describe('ChatService', () => {
     }
 
     expect(events.some((e) => e.event === 'done')).toBe(false);
-    expect(supabaseConversationRepository.markGenerationFailed).toHaveBeenCalled();
+    expect(markGenerationFailed).toHaveBeenCalled();
   });
 });

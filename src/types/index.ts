@@ -1,5 +1,7 @@
 export type AuthMethod = 'supabase' | 'api_key';
 
+export type AuthRole = 'USER' | 'ADMIN' | 'SERVICE';
+
 export type WorkspaceRole = 'owner' | 'admin' | 'editor' | 'viewer';
 
 export type AgentStatus = 'draft' | 'published' | 'archived';
