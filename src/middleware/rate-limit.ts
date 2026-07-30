@@ -8,7 +8,8 @@ export async function registerRateLimit(app: FastifyInstance): Promise<void> {
     global: true,
     max: config.rateLimit.max,
     timeWindow: config.rateLimit.windowMs,
-    redis,
+    // ioredis v5 instance is compatible at runtime
+    redis: redis as never,
     keyGenerator: (request) => {
       const workspaceId = request.auth?.workspaceId;
       if (workspaceId) return `rl:ws:${workspaceId}`;

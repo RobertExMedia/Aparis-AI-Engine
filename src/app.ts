@@ -8,11 +8,38 @@ import { config } from './config/index.js';
 import { registerRoutes } from './routes/index.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { registerRateLimit } from './middleware/rate-limit.js';
-import { logger } from './utils/logger.js';
 
 export async function buildApp() {
   const app = Fastify({
-    loggerInstance: logger,
+    logger: {
+      level: config.logLevel,
+      base: {
+        service: config.app.name,
+        version: config.app.version,
+        env: config.env,
+      },
+      timestamp: () => `,"time":"${new Date().toISOString()}"`,
+      redact: {
+        paths: [
+          'req.headers.authorization',
+          'req.headers["x-api-key"]',
+          'password',
+          'token',
+          'apiKey',
+        ],
+        remove: true,
+      },
+      transport: config.isDev
+        ? {
+            target: 'pino-pretty',
+            options: {
+              colorize: true,
+              translateTime: 'SYS:standard',
+              ignore: 'pid,hostname',
+            },
+          }
+        : undefined,
+    },
     requestIdHeader: 'x-request-id',
     genReqId: () => crypto.randomUUID(),
     trustProxy: true,
@@ -79,9 +106,7 @@ export async function buildApp() {
   });
 
   await registerRateLimit(app);
-
   app.setErrorHandler(errorHandler);
-
   await registerRoutes(app);
 
   return app;

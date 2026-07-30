@@ -6,7 +6,7 @@ import { promptBuilder } from './prompt-builder.service.js';
 import { knowledgeService } from './knowledge.service.js';
 import { NotFoundError, ValidationError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-import type { ChatMessage, ChatRequest, ChatResponse, StreamChunk } from '../types/index.js';
+import type { ChatRequest, ChatResponse, StreamChunk } from '../types/index.js';
 
 export class ChatService {
   async chat(request: ChatRequest): Promise<ChatResponse> {
