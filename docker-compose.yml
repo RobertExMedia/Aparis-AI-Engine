@@ -97,9 +97,21 @@ services:
     networks:
       - aparis
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: aparis-ollama
+    restart: unless-stopped
+    ports:
+      - "18002:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - aparis
+
 volumes:
   postgres_data:
   redis_data:
+  ollama_data:
 
 networks:
   aparis:
