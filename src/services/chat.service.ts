@@ -283,7 +283,9 @@ export class ChatService {
         return;
       }
 
-      const final = next.value;
+      const final = next.value as
+        | { message?: ChatMessage; model?: string }
+        | undefined;
       if (final?.message?.content) {
         assistantContent = final.message.content;
       }

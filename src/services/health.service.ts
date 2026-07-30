@@ -3,6 +3,7 @@ import { statfs } from 'node:fs/promises';
 import { prisma } from '../config/database.js';
 import { redis } from '../config/redis.js';
 import { getAIProvider } from '../providers/index.js';
+import { getServiceSupabaseClient } from '../supabase/client.js';
 import { config } from '../config/index.js';
 import type { ComponentHealth, HealthCheckResult } from '../types/index.js';
 
@@ -11,11 +12,11 @@ async function checkDatabase(): Promise<ComponentHealth> {
   try {
     await prisma.$queryRaw`SELECT 1`;
     return { status: 'ok', latencyMs: Date.now() - start };
-  } catch (err) {
+  } catch {
     return {
       status: 'error',
       latencyMs: Date.now() - start,
-      message: err instanceof Error ? err.message : 'Database unreachable',
+      message: 'Operational database unreachable',
     };
   }
 }
@@ -27,13 +28,12 @@ async function checkRedis(): Promise<ComponentHealth> {
     return {
       status: pong === 'PONG' ? 'ok' : 'error',
       latencyMs: Date.now() - start,
-      message: pong !== 'PONG' ? `Unexpected ping response: ${pong}` : undefined,
     };
-  } catch (err) {
+  } catch {
     return {
       status: 'error',
       latencyMs: Date.now() - start,
-      message: err instanceof Error ? err.message : 'Redis unreachable',
+      message: 'Redis unreachable',
     };
   }
 }
@@ -45,6 +45,28 @@ async function checkOllama(): Promise<ComponentHealth> {
     latencyMs: result.latencyMs,
     message: result.message,
   };
+}
+
+async function checkSupabase(): Promise<ComponentHealth> {
+  const start = Date.now();
+  try {
+    const client = getServiceSupabaseClient();
+    const { error } = await client.from('plans').select('code').limit(1);
+    if (error) {
+      return {
+        status: 'error',
+        latencyMs: Date.now() - start,
+        message: 'Supabase query failed',
+      };
+    }
+    return { status: 'ok', latencyMs: Date.now() - start };
+  } catch {
+    return {
+      status: 'error',
+      latencyMs: Date.now() - start,
+      message: 'Supabase unreachable',
+    };
+  }
 }
 
 async function checkDisk(): Promise<ComponentHealth> {
@@ -63,11 +85,8 @@ async function checkDisk(): Promise<ComponentHealth> {
       },
       message: status === 'error' ? 'Disk usage critical (>95%)' : undefined,
     };
-  } catch (err) {
-    return {
-      status: 'error',
-      message: err instanceof Error ? err.message : 'Disk check failed',
-    };
+  } catch {
+    return { status: 'error', message: 'Disk check failed' };
   }
 }
 
@@ -89,21 +108,21 @@ function checkMemory(): ComponentHealth {
 
 export class HealthService {
   async check(): Promise<HealthCheckResult> {
-    const [database, redisHealth, ollama, disk] = await Promise.all([
+    const [database, redisHealth, ollama, supabase, disk] = await Promise.all([
       checkDatabase(),
       checkRedis(),
       checkOllama(),
+      checkSupabase(),
       checkDisk(),
     ]);
     const memory = checkMemory();
 
-    const checks = { database, redis: redisHealth, ollama, disk, memory };
+    const checks = { database, redis: redisHealth, ollama, supabase, disk, memory };
     const values = Object.values(checks);
-    const hasError = values.some((c) => c.status === 'error');
     const allOk = values.every((c) => c.status === 'ok');
 
     return {
-      status: allOk ? 'ok' : hasError ? 'degraded' : 'degraded',
+      status: allOk ? 'ok' : 'degraded',
       checks,
       timestamp: new Date().toISOString(),
       version: config.app.version,

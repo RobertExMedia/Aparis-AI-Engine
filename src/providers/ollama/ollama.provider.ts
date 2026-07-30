@@ -144,9 +144,8 @@ export class OllamaProvider implements AIProvider {
     let finishReason: string | undefined;
 
     const onAbort = () => {
-      if (typeof (stream as { destroy?: () => void }).destroy === 'function') {
-        (stream as { destroy: () => void }).destroy();
-      }
+      const destroyable = stream as unknown as { destroy?: () => void };
+      destroyable.destroy?.();
     };
     options.signal?.addEventListener('abort', onAbort);
 

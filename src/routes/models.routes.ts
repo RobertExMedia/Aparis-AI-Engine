@@ -1,17 +1,17 @@
 import type { FastifyInstance } from 'fastify';
 import { modelsController } from '../controllers/models.controller.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticateApiKeyOnly } from '../middleware/auth.js';
 import { errorResponseJsonSchema } from '../types/schemas.js';
 
 export async function modelsRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     '/models',
     {
-      preHandler: [authenticate],
+      preHandler: [authenticateApiKeyOnly],
       schema: {
         tags: ['Models'],
-        summary: 'List installed Ollama models',
-        security: [{ bearerAuth: [] }, { apiKeyAuth: [] }],
+        summary: 'List installed Ollama models (server-to-server)',
+        security: [{ apiKeyAuth: [] }],
         response: {
           200: {
             type: 'object',

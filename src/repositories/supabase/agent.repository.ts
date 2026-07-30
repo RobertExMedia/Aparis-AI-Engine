@@ -1,10 +1,10 @@
-import { getServiceSupabaseClient, createUserSupabaseClient } from '../supabase/client.js';
+import { getServiceSupabaseClient, createUserSupabaseClient } from '../../supabase/client.js';
 import {
   AgentNotFoundError,
   AgentUnavailableError,
-} from '../utils/errors.js';
-import type { AgentConfiguration, AgentStatus } from '../types/index.js';
-import type { Tables } from '../supabase/database.types.js';
+} from '../../utils/errors.js';
+import type { AgentConfiguration, AgentStatus } from '../../types/index.js';
+import type { Tables } from '../../supabase/database.types.js';
 
 type AgentRow = Tables<'agents'>;
 

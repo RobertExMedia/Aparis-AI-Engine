@@ -2,9 +2,17 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { prisma } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 
+function resolveWorkspaceId(request: FastifyRequest): string | undefined {
+  if (request.auth && 'workspaceId' in request.auth && request.auth.workspaceId) {
+    return request.auth.workspaceId;
+  }
+  const body = request.body as { workspaceId?: string } | undefined;
+  if (body?.workspaceId) return body.workspaceId;
+  return undefined;
+}
+
 /**
  * Tracks message count, tokens, and response time per authenticated request.
- * Attach before handlers; flush on response.
  */
 export async function usageTracker(
   request: FastifyRequest,
@@ -17,7 +25,7 @@ export async function usageTracker(
 
   reply.raw.on('finish', () => {
     const meta = request.usageMeta;
-    const workspaceId = request.auth?.workspaceId;
+    const workspaceId = resolveWorkspaceId(request);
     if (!meta || !workspaceId) return;
 
     const responseTimeMs = Date.now() - meta.startTime;

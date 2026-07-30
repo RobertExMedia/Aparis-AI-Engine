@@ -13,9 +13,13 @@ export const logger = pino({
     paths: [
       'req.headers.authorization',
       'req.headers["x-api-key"]',
+      'req.headers.cookie',
+      'res.headers["set-cookie"]',
       'password',
       'token',
+      'accessToken',
       'apiKey',
+      'SUPABASE_SERVICE_ROLE_KEY',
     ],
     remove: true,
   },

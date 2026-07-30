@@ -23,7 +23,6 @@ model Workspace {
 
   apiKeys       ApiKey[]
   conversations Conversation[]
-  usageLogs     UsageLog[]
   agents        Agent[]
 
   @@map("workspaces")
@@ -112,8 +111,6 @@ model UsageLog {
   totalTokens    Int?     @map("total_tokens")
   responseTimeMs Int      @map("response_time_ms")
   createdAt      DateTime @default(now()) @map("created_at")
-
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId])
   @@index([createdAt])

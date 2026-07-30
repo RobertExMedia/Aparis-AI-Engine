@@ -1,5 +1,13 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { JwtPayload } from '../types/index.js';
+import type { AuthRole } from '../types/index.js';
+
+export interface JwtPayload {
+  sub: string;
+  workspaceId: string;
+  role: AuthRole;
+  type?: 'user' | 'admin';
+  exp?: number;
+}
 
 function base64UrlEncode(data: Buffer | string): string {
   const buf = typeof data === 'string' ? Buffer.from(data) : data;
