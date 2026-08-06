@@ -113,7 +113,7 @@ export async function buildApp() {
         { name: 'Health', description: 'Health & readiness' },
         { name: 'Chat', description: 'Dashboard chat (Supabase auth)' },
         { name: 'Widget', description: 'Public website widget (widget key + domain)' },
-        { name: 'Models', description: 'Available AI models (server-to-server)' },
+        { name: 'Models', description: 'Available AI models (Supabase JWT or X-API-Key)' },
       ],
       components: {
         securitySchemes: {
