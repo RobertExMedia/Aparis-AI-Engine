@@ -2,7 +2,10 @@ import { config } from '../config/index.js';
 import { getAIProvider } from '../providers/index.js';
 import type { ChatKnowledgePayload, KnowledgeCitation } from '../knowledge/types.js';
 import { supabaseKnowledgeRepository } from '../repositories/supabase/knowledge.repository.js';
+import { aiCreditsService } from './ai-credits.service.js';
+import { estimateTokens } from '../utils/crypto.js';
 import { logger } from '../utils/logger.js';
+import { CreditsExhaustedError } from '../utils/errors.js';
 
 export interface KnowledgeRetrievalResult {
   texts: string[];
@@ -37,6 +40,17 @@ export class KnowledgeRetrievalService {
       if (!embedding?.length) {
         return { texts: [], citations: [], payload: { used: false, sources: [] } };
       }
+
+      await aiCreditsService.settle({
+        accessToken: params.accessToken,
+        workspaceId: params.workspaceId,
+        promptTokens: estimateTokens(query),
+        completionTokens: 0,
+        endpoint: 'knowledge/retrieve',
+        agentId: params.agentId,
+        model: config.ollama.embedModel,
+        status: 'success',
+      });
 
       const rows = await supabaseKnowledgeRepository.matchChunks(params.accessToken, {
         embedding,
@@ -76,6 +90,7 @@ export class KnowledgeRetrievalService {
         payload: { used: citations.length > 0, sources: citations },
       };
     } catch (err) {
+      if (err instanceof CreditsExhaustedError) throw err;
       // Chat must still work if retrieval/migration is not ready yet.
       logger.warn(
         {

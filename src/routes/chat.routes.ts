@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { chatController } from '../controllers/chat.controller.js';
 import { authenticateSupabaseUser } from '../middleware/auth.js';
+import { requireAiCredits } from '../middleware/ai-credits.js';
 import { usageTracker } from '../middleware/usage.js';
 import {
   dashboardChatBodyJsonSchema,
@@ -9,15 +10,19 @@ import {
 } from '../types/schemas.js';
 
 export async function chatRoutes(app: FastifyInstance): Promise<void> {
+  const chatAuth = {
+    preHandler: [authenticateSupabaseUser, requireAiCredits(), usageTracker],
+  };
+
   app.post(
     '/chat',
     {
-      preHandler: [authenticateSupabaseUser, usageTracker],
+      ...chatAuth,
       schema: {
         tags: ['Chat'],
         summary: 'Dashboard chat completion',
         description:
-          'Authenticates a Supabase user, verifies workspace membership (owner/admin/editor), loads the agent configuration from Supabase, calls Ollama, and stores the conversation. Never accepts systemPrompt from the client.',
+          'Authenticates a Supabase user, verifies workspace membership (owner/admin/editor), checks AI credits, loads the agent configuration from Supabase, calls Ollama, deducts credits, and stores the conversation. Never accepts systemPrompt from the client.',
         security: [{ supabaseBearer: [] }],
         body: dashboardChatBodyJsonSchema,
         response: {
@@ -38,12 +43,12 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     '/chat/stream',
     {
-      preHandler: [authenticateSupabaseUser, usageTracker],
+      ...chatAuth,
       schema: {
         tags: ['Chat'],
         summary: 'Dashboard streaming chat (SSE)',
         description:
-          'Same authz as /chat. Emits SSE events: start, token, done, error. Aborts Ollama when the client disconnects.',
+          'Same authz and AI credits as /chat. Emits SSE events: start, token, done, error. Aborts Ollama when the client disconnects.',
         security: [{ supabaseBearer: [] }],
         body: dashboardChatBodyJsonSchema,
         response: {

@@ -66,6 +66,22 @@ export class RateLimitError extends AppError {
   }
 }
 
+export class CreditsExhaustedError extends AppError {
+  public readonly credits: {
+    remaining: number | null;
+    used: number;
+    limit: number | null;
+  };
+
+  constructor(
+    message = 'This workspace has reached its current usage limit.',
+    credits: { remaining: number | null; used: number; limit: number | null },
+  ) {
+    super(message, 429, 'CREDITS_EXHAUSTED', { credits });
+    this.credits = credits;
+  }
+}
+
 export class AiUnavailableError extends AppError {
   constructor(
     message = 'The AI service is temporarily unavailable. Please try again shortly.',

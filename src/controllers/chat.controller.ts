@@ -4,6 +4,7 @@ import { requireSupabaseAuth } from '../middleware/auth.js';
 import { recordUsage } from '../middleware/usage.js';
 import { dashboardChatBodySchema } from '../types/schemas.js';
 import { workspaceAuthorizationService } from '../services/workspace-authorization.service.js';
+import { aiCreditsService } from '../services/ai-credits.service.js';
 import { supabaseAgentRepository } from '../repositories/supabase/agent.repository.js';
 import {
   AppError,
@@ -35,6 +36,14 @@ export class ChatController {
       totalTokens: result.usage?.totalTokens,
     });
 
+    if (result.credits) {
+      request.creditsMeta = {
+        workspaceId: parsed.data.workspaceId,
+        credits: result.credits,
+        settled: true,
+      };
+    }
+
     return reply.status(200).send(result);
   }
 
@@ -45,7 +54,7 @@ export class ChatController {
       throw new ValidationError('Invalid chat request', parsed.error.flatten());
     }
 
-    // Preflight authz so 401/403/404/409 are normal HTTP responses (not SSE)
+    // Preflight authz so 401/403/404/409/429 are normal HTTP responses (not SSE)
     await workspaceAuthorizationService.assertMembership({
       accessToken: request.auth.accessToken,
       userId: request.auth.userId,
@@ -55,6 +64,11 @@ export class ChatController {
       parsed.data.agentId,
       parsed.data.workspaceId,
       request.auth.accessToken,
+    );
+    // Credits already checked by requireAiCredits preHandler; re-assert for SSE safety.
+    await aiCreditsService.assertAvailable(
+      request.auth.accessToken,
+      parsed.data.workspaceId,
     );
 
     const abort = new AbortController();
@@ -77,6 +91,21 @@ export class ChatController {
         signal: abort.signal,
       })) {
         if (abort.signal.aborted) break;
+        if (evt.event === 'done' && 'usage' in evt.data && evt.data.usage) {
+          recordUsage(request, {
+            messageCount: 2,
+            promptTokens: evt.data.usage.promptTokens,
+            completionTokens: evt.data.usage.completionTokens,
+            totalTokens: evt.data.usage.totalTokens,
+          });
+          if ('credits' in evt.data && evt.data.credits) {
+            request.creditsMeta = {
+              workspaceId: parsed.data.workspaceId,
+              credits: evt.data.credits,
+              settled: true,
+            };
+          }
+        }
         writeSse(reply, evt.event, evt.data);
       }
     } catch (err) {

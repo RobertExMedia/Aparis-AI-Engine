@@ -64,6 +64,11 @@ const envSchema = z.object({
   KNOWLEDGE_TOP_K: z.coerce.number().default(8),
   KNOWLEDGE_SIMILARITY_THRESHOLD: z.coerce.number().default(0.25),
   KNOWLEDGE_PROCESS_SYNC_MAX_BYTES: z.coerce.number().default(512 * 1024),
+
+  /** Internal conversion — never expose to clients. */
+  AI_CREDITS_TOKENS_PER_CREDIT: z.coerce.number().default(1_000),
+  AI_CREDITS_COMPLETION_WEIGHT: z.coerce.number().default(1),
+  AI_CREDITS_MIN_PER_REQUEST: z.coerce.number().default(1),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -198,6 +203,13 @@ export const config = {
     similarityThreshold: env.KNOWLEDGE_SIMILARITY_THRESHOLD,
     /** Process inline when total uploaded bytes are under this; else queue. */
     processSyncMaxBytes: env.KNOWLEDGE_PROCESS_SYNC_MAX_BYTES,
+  },
+
+  /** Server-side token→credit conversion. Stripe can later adjust allotments only. */
+  aiCredits: {
+    tokensPerCredit: env.AI_CREDITS_TOKENS_PER_CREDIT,
+    completionWeight: env.AI_CREDITS_COMPLETION_WEIGHT,
+    minCreditsPerRequest: env.AI_CREDITS_MIN_PER_REQUEST,
   },
 
   allowedOrigins: allowedOriginsRaw

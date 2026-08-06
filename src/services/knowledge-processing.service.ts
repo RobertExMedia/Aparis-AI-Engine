@@ -11,6 +11,7 @@ import {
 } from '../knowledge/processing-stages.js';
 import { supabaseKnowledgeRepository } from '../repositories/supabase/knowledge.repository.js';
 import { knowledgeJobProgressStore } from './knowledge-job-progress.service.js';
+import { aiCreditsService } from './ai-credits.service.js';
 import { ValidationError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
@@ -239,6 +240,8 @@ export class KnowledgeProcessingService {
         totalChunks: prepared.length,
       });
 
+      await aiCreditsService.assertAvailable(accessToken, workspaceId);
+
       const provider = getAIProvider();
       const embedModel = processing.embeddingModel || config.ollama.embedModel;
       const rows: Array<{
@@ -293,6 +296,19 @@ export class KnowledgeProcessingService {
       await complete('generating_embeddings', {
         processedChunks: rows.length,
         totalChunks: rows.length,
+      });
+
+      const embedPromptTokens = prepared.reduce((n, p) => n + (p.token_count || 0), 0);
+      await aiCreditsService.settle({
+        accessToken,
+        workspaceId,
+        promptTokens: embedPromptTokens,
+        completionTokens: 0,
+        endpoint: 'knowledge/embeddings',
+        requestId: jobId,
+        model: embedModel,
+        status: 'success',
+        metadata: { sourceId, chunkCount: rows.length },
       });
 
       await stage('saving_chunks', {

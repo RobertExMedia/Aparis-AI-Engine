@@ -1,6 +1,6 @@
 import type { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
 import { ZodError } from 'zod';
-import { AppError } from '../utils/errors.js';
+import { AppError, CreditsExhaustedError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config/index.js';
 
@@ -9,6 +9,12 @@ interface ErrorBody {
   error: string;
   message: string;
   details?: unknown;
+  /** Public credits snapshot only — never billing internals. */
+  credits?: {
+    remaining: number | null;
+    used: number;
+    limit: number | null;
+  };
 }
 
 export function errorHandler(
@@ -38,6 +44,10 @@ export function errorHandler(
       message: error.message,
       ...(config.isDev && error.details ? { details: error.details } : {}),
     };
+
+    if (error instanceof CreditsExhaustedError) {
+      body.credits = error.credits;
+    }
 
     void reply.status(error.statusCode).send(body);
     return;

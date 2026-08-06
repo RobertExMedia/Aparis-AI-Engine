@@ -6,11 +6,13 @@ import { supabaseConversationRepository } from '../repositories/supabase/convers
 import { workspaceAuthorizationService } from './workspace-authorization.service.js';
 import { promptBuilder } from './prompt-builder.service.js';
 import { knowledgeRetrievalService } from './knowledge-retrieval.service.js';
-import { ValidationError, AiUnavailableError, ForbiddenError } from '../utils/errors.js';
+import { aiCreditsService } from './ai-credits.service.js';
+import { ValidationError, AiUnavailableError, ForbiddenError, CreditsExhaustedError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import type { ChatKnowledgePayload } from '../knowledge/types.js';
 import type {
   AgentConfiguration,
+  CreditsBalance,
   DashboardChatRequest,
   DashboardChatResponse,
   ChatMessage,
@@ -116,6 +118,21 @@ export class ChatService {
         },
       });
 
+      const settled = await aiCreditsService.settle({
+        accessToken,
+        workspaceId: request.workspaceId,
+        promptTokens: result.usage?.promptTokens,
+        completionTokens: result.usage?.completionTokens,
+        promptText: built.messages.map((m) => m.content).join('\n'),
+        completionText: result.message.content,
+        endpoint: 'chat',
+        requestId,
+        agentId: agent.id,
+        conversationId: conversation.id,
+        model: result.model,
+        status: 'success',
+      });
+
       logger.info(
         {
           requestId,
@@ -139,7 +156,12 @@ export class ChatService {
         model: result.model,
         provider: provider.name,
         durationMs,
-        usage: result.usage,
+        usage: {
+          promptTokens: settled.promptTokens,
+          completionTokens: settled.completionTokens,
+          totalTokens: settled.totalTokens,
+        },
+        credits: settled.credits,
         knowledge: built.knowledge,
       };
     } catch (err) {
@@ -175,6 +197,7 @@ export class ChatService {
         'Chat failed',
       );
 
+      if (err instanceof CreditsExhaustedError) throw err;
       if (err instanceof AiUnavailableError) throw err;
       throw new AiUnavailableError();
     }
@@ -196,6 +219,12 @@ export class ChatService {
           durationMs: number;
           model: string;
           knowledge?: ChatKnowledgePayload;
+          usage?: {
+            promptTokens: number;
+            completionTokens: number;
+            totalTokens: number;
+          };
+          credits?: CreditsBalance;
         };
       }
     | { event: 'error'; data: { message: string } }
@@ -290,7 +319,15 @@ export class ChatService {
       }
 
       const final = next.value as
-        | { message?: ChatMessage; model?: string }
+        | {
+            message?: ChatMessage;
+            model?: string;
+            usage?: {
+              promptTokens: number;
+              completionTokens: number;
+              totalTokens: number;
+            };
+          }
         | undefined;
       if (final?.message?.content) {
         assistantContent = final.message.content;
@@ -320,6 +357,21 @@ export class ChatService {
         });
       }
 
+      const settled = await aiCreditsService.settle({
+        accessToken,
+        workspaceId: request.workspaceId,
+        promptTokens: final?.usage?.promptTokens,
+        completionTokens: final?.usage?.completionTokens,
+        promptText: built.messages.map((m) => m.content).join('\n'),
+        completionText: assistantContent,
+        endpoint: 'chat/stream',
+        requestId,
+        agentId: agent.id,
+        conversationId: conversation.id,
+        model: finalModel,
+        status: 'success',
+      });
+
       logger.info(
         {
           requestId,
@@ -345,6 +397,12 @@ export class ChatService {
           durationMs,
           model: finalModel,
           knowledge: built.knowledge,
+          usage: {
+            promptTokens: settled.promptTokens,
+            completionTokens: settled.completionTokens,
+            totalTokens: settled.totalTokens,
+          },
+          credits: settled.credits,
         },
       };
     } catch (err) {

@@ -490,6 +490,106 @@ export type Database = {
           },
         ]
       }
+      workspace_credits: {
+        Row: {
+          workspace_id: string
+          monthly_credits: number | null
+          used_credits: number
+          remaining_credits: number | null
+          reset_date: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          workspace_id: string
+          monthly_credits?: number | null
+          used_credits?: number
+          remaining_credits?: number | null
+          reset_date: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          workspace_id?: string
+          monthly_credits?: number | null
+          used_credits?: number
+          remaining_credits?: number | null
+          reset_date?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_credits_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      usage_events: {
+        Row: {
+          id: string
+          workspace_id: string
+          user_id: string | null
+          agent_id: string | null
+          conversation_id: string | null
+          request_id: string | null
+          endpoint: string
+          model: string | null
+          prompt_tokens: number
+          completion_tokens: number
+          total_tokens: number
+          credits_charged: number
+          status: string
+          metadata: Json
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          workspace_id: string
+          user_id?: string | null
+          agent_id?: string | null
+          conversation_id?: string | null
+          request_id?: string | null
+          endpoint?: string
+          model?: string | null
+          prompt_tokens?: number
+          completion_tokens?: number
+          total_tokens?: number
+          credits_charged?: number
+          status?: string
+          metadata?: Json
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          workspace_id?: string
+          user_id?: string | null
+          agent_id?: string | null
+          conversation_id?: string | null
+          request_id?: string | null
+          endpoint?: string
+          model?: string | null
+          prompt_tokens?: number
+          completion_tokens?: number
+          total_tokens?: number
+          credits_charged?: number
+          status?: string
+          metadata?: Json
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "usage_events_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -516,6 +616,26 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      get_workspace_credits: {
+        Args: { _workspace_id: string }
+        Returns: Json
+      }
+      consume_workspace_credits: {
+        Args: {
+          _workspace_id: string
+          _credits: number
+          _prompt_tokens?: number
+          _completion_tokens?: number
+          _endpoint?: string
+          _request_id?: string
+          _agent_id?: string
+          _conversation_id?: string
+          _model?: string
+          _status?: string
+          _metadata?: Json
+        }
+        Returns: Json
       }
       current_user_can_edit_workspace: {
         Args: { _workspace_id: string }

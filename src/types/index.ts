@@ -58,6 +58,13 @@ export interface TokenUsage {
   totalTokens: number;
 }
 
+/** Public AI credits snapshot — no billing/Stripe internals. */
+export interface CreditsBalance {
+  remaining: number | null;
+  used: number;
+  limit: number | null;
+}
+
 export interface DashboardChatResponse {
   requestId: string;
   conversationId: string;
@@ -66,6 +73,7 @@ export interface DashboardChatResponse {
   provider: string;
   durationMs: number;
   usage?: TokenUsage;
+  credits?: CreditsBalance;
   knowledge?: {
     used: boolean;
     sources: Array<{
@@ -152,6 +160,12 @@ declare module 'fastify' {
       completionTokens?: number;
       totalTokens?: number;
       startTime: number;
+    };
+    creditsMeta?: {
+      workspaceId: string;
+      credits: CreditsBalance;
+      settled: boolean;
+      creditsCharged?: number;
     };
   }
 }

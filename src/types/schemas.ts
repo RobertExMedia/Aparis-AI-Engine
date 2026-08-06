@@ -61,6 +61,14 @@ export const dashboardChatResponseJsonSchema = {
         totalTokens: { type: 'integer' },
       },
     },
+    credits: {
+      type: 'object',
+      properties: {
+        remaining: { type: ['integer', 'null'] },
+        used: { type: 'integer' },
+        limit: { type: ['integer', 'null'] },
+      },
+    },
     knowledge: {
       type: 'object',
       properties: {
@@ -76,5 +84,13 @@ export const errorResponseJsonSchema = {
   properties: {
     error: { type: 'string' },
     message: { type: 'string' },
+    credits: {
+      type: 'object',
+      properties: {
+        remaining: { type: ['integer', 'null'] },
+        used: { type: 'integer' },
+        limit: { type: ['integer', 'null'] },
+      },
+    },
   },
 } as const;

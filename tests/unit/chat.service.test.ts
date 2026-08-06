@@ -44,6 +44,28 @@ vi.mock('../../src/services/workspace-authorization.service.js', () => ({
   },
 }));
 
+vi.mock('../../src/services/ai-credits.service.js', () => ({
+  aiCreditsService: {
+    assertAvailable: vi.fn().mockResolvedValue({
+      remaining: 1999,
+      used: 1,
+      limit: 2000,
+    }),
+    settle: vi.fn().mockResolvedValue({
+      credits: { remaining: 1998, used: 2, limit: 2000 },
+      creditsCharged: 1,
+      promptTokens: 10,
+      completionTokens: 5,
+      totalTokens: 15,
+    }),
+    getBalance: vi.fn().mockResolvedValue({
+      remaining: 1999,
+      used: 1,
+      limit: 2000,
+    }),
+  },
+}));
+
 vi.mock('../../src/repositories/supabase/agent.repository.js', () => ({
   supabaseAgentRepository: {
     loadAgentConfiguration: vi.fn().mockResolvedValue({
