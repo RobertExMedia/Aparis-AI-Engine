@@ -4,6 +4,7 @@ import { connectDatabase, disconnectDatabase } from './config/database.js';
 import { connectRedis, disconnectRedis } from './config/redis.js';
 import { getAIProvider } from './providers/index.js';
 import { startKnowledgeWorker } from './workers/knowledge.worker.js';
+import { closeKnowledgeJobStore } from './services/knowledge-job-progress.service.js';
 import { logger } from './utils/logger.js';
 
 async function main() {
@@ -31,6 +32,7 @@ async function main() {
     logger.info({ signal }, 'Shutting down');
     try {
       await knowledgeWorker?.close();
+      await closeKnowledgeJobStore();
       await app.close();
       await disconnectRedis();
       await disconnectDatabase();

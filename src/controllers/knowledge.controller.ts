@@ -5,10 +5,13 @@ import { requireSupabaseAuth } from '../middleware/auth.js';
 import { workspaceAuthorizationService } from '../services/workspace-authorization.service.js';
 import { supabaseAgentRepository } from '../repositories/supabase/agent.repository.js';
 import { supabaseKnowledgeRepository } from '../repositories/supabase/knowledge.repository.js';
-import { knowledgeProcessingService } from '../services/knowledge-processing.service.js';
 import { enqueueKnowledgeProcess } from '../workers/knowledge.worker.js';
+import {
+  knowledgeJobProgressStore,
+  toJobApiResponse,
+} from '../services/knowledge-job-progress.service.js';
+import { displayStageName } from '../knowledge/processing-stages.js';
 import { ValidationError } from '../utils/errors.js';
-import { config } from '../config/index.js';
 import type { KnowledgeType } from '../knowledge/types.js';
 const sourceCreateSchema = z.object({
   workspaceId: z.string().uuid(),
@@ -196,14 +199,18 @@ export class KnowledgeController {
       workspaceId: parsed.data.workspaceId,
     });
 
-    const source = await supabaseKnowledgeRepository.assertSourceInWorkspace(
+    await supabaseKnowledgeRepository.assertSourceInWorkspace(
       request.auth.accessToken,
       id,
       parsed.data.workspaceId,
     );
-    void source;
-    const files = await supabaseKnowledgeRepository.listFiles(request.auth.accessToken, id);
-    const totalBytes = files.reduce((n, f) => n + (f.file_size || 0), 0);
+
+    await supabaseKnowledgeRepository.updateSource(
+      request.auth.accessToken,
+      id,
+      parsed.data.workspaceId,
+      { status: 'processing', error_message: null },
+    );
 
     const jobData = {
       accessToken: request.auth.accessToken,
@@ -215,21 +222,39 @@ export class KnowledgeController {
       idempotencyKey: jobIdempotencyKey(id, reprocess, parsed.data.processing),
     };
 
-    // Small sources process inline; larger ones go to the Redis queue.
-    if (totalBytes <= config.knowledge.processSyncMaxBytes) {
-      const result = await knowledgeProcessingService.processSource(jobData);
-      return reply.send(result);
-    }
-
-    await supabaseKnowledgeRepository.updateSource(
-      request.auth.accessToken,
-      id,
-      parsed.data.workspaceId,
-      { status: 'processing', error_message: null },
-    );
-
+    // Always enqueue so progress is pollable and jobs survive API restarts via Redis/BullMQ.
     const { jobId } = await enqueueKnowledgeProcess(jobData);
-    return reply.status(202).send({ status: 'processing', jobId });
+    const job = await knowledgeJobProgressStore.require(jobId);
+
+    const label = displayStageName(job.currentStage);
+    return reply.status(202).send({
+      status: 'queued',
+      jobId,
+      job: {
+        ...toJobApiResponse(job),
+        current_stage_label: label,
+        stageLabel: label,
+      },
+    });
+  }
+
+  async getJob(request: FastifyRequest, reply: FastifyReply) {
+    requireSupabaseAuth(request.auth);
+    const { id } = request.params as { id: string };
+    const job = await knowledgeJobProgressStore.require(id);
+
+    await workspaceAuthorizationService.assertMembership({
+      accessToken: request.auth.accessToken,
+      userId: request.auth.userId,
+      workspaceId: job.workspaceId,
+    });
+
+    const label = displayStageName(job.currentStage);
+    return reply.send({
+      ...toJobApiResponse(job),
+      current_stage_label: label,
+      stageLabel: label,
+    });
   }
 
   async listChunks(request: FastifyRequest, reply: FastifyReply) {

@@ -76,6 +76,54 @@ export async function knowledgeRoutes(app: FastifyInstance): Promise<void> {
     },
   }, (req, reply) => knowledgeController.reprocessSource(req, reply));
 
+  app.get('/knowledge/jobs/:id', {
+    ...auth,
+    schema: {
+      tags: ['Knowledge'],
+      summary: 'Get knowledge processing job progress',
+      description:
+        'Poll real pipeline progress (never faked). Survives API restarts via Redis/BullMQ.',
+      security: [{ supabaseBearer: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: { id: { type: 'string' } },
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            status: { type: 'string' },
+            progress: { type: 'number' },
+            current_stage: { type: 'string' },
+            current_stage_label: { type: 'string' },
+            started_at: { type: ['string', 'null'] },
+            finished_at: { type: ['string', 'null'] },
+            estimated_remaining_ms: { type: ['number', 'null'] },
+            processed_chunks: { type: 'number' },
+            total_chunks: { type: ['number', 'null'] },
+            errors: { type: 'array', items: { type: 'string' } },
+            workspace_id: { type: 'string' },
+            source_id: { type: 'string' },
+            currentStage: { type: 'string' },
+            stageLabel: { type: 'string' },
+            startedAt: { type: ['string', 'null'] },
+            finishedAt: { type: ['string', 'null'] },
+            estimatedRemainingMs: { type: ['number', 'null'] },
+            processedChunks: { type: 'number' },
+            totalChunks: { type: ['number', 'null'] },
+            workspaceId: { type: 'string' },
+            sourceId: { type: 'string' },
+          },
+        },
+        401: errorResponseJsonSchema,
+        403: errorResponseJsonSchema,
+        404: errorResponseJsonSchema,
+      },
+    },
+  }, (req, reply) => knowledgeController.getJob(req, reply));
+
   app.get('/knowledge/sources/:id/chunks', {
     ...auth,
     schema: {

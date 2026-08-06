@@ -1,10 +1,16 @@
+import type { Job } from 'bullmq';
 import { config } from '../config/index.js';
 import { getAIProvider } from '../providers/index.js';
 import { chunkText, estimateTokens } from '../knowledge/chunker.js';
 import { resolveParser } from '../knowledge/parsers/index.js';
+import { normalizeWhitespace } from '../knowledge/parsers/types.js';
 import type { ProcessingSettings } from '../knowledge/types.js';
 import { NOMIC_EMBED_DIMENSIONS } from '../knowledge/types.js';
+import {
+  progressForEmbeddingWork,
+} from '../knowledge/processing-stages.js';
 import { supabaseKnowledgeRepository } from '../repositories/supabase/knowledge.repository.js';
+import { knowledgeJobProgressStore } from './knowledge-job-progress.service.js';
 import { ValidationError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
@@ -17,88 +23,113 @@ function embeddingToPgVector(values: number[]): string {
   return `[${values.join(',')}]`;
 }
 
-export class KnowledgeProcessingService {
-  async processSource(params: {
-    accessToken: string;
-    workspaceId: string;
-    sourceId: string;
-    processing?: Partial<ProcessingSettings>;
-    reprocess?: boolean;
-    actorId?: string;
-  }): Promise<{ status: string; chunkCount: number }> {
-    const { accessToken, workspaceId, sourceId } = params;
-    const source = await supabaseKnowledgeRepository.assertSourceInWorkspace(
-      accessToken,
-      sourceId,
-      workspaceId,
-    );
+export interface ProcessSourceParams {
+  accessToken: string;
+  workspaceId: string;
+  sourceId: string;
+  processing?: Partial<ProcessingSettings>;
+  reprocess?: boolean;
+  actorId?: string;
+  jobId: string;
+  bullmqJob?: Job;
+}
 
-    const processing = {
-      ...supabaseKnowledgeRepository.readProcessingSettings(source),
-      ...(params.processing ?? {}),
+/**
+ * Real multi-stage knowledge processing pipeline.
+ * Each stage updates Redis + BullMQ progress + Supabase (source settings / events).
+ */
+export class KnowledgeProcessingService {
+  async processSource(params: ProcessSourceParams): Promise<{ status: string; chunkCount: number }> {
+    const { accessToken, workspaceId, sourceId, jobId, bullmqJob, actorId } = params;
+
+    const stage = async (
+      name: Parameters<typeof knowledgeJobProgressStore.enterStage>[0]['stage'],
+      extra?: { processedChunks?: number; totalChunks?: number | null },
+    ) => {
+      await knowledgeJobProgressStore.enterStage({
+        jobId,
+        stage: name,
+        bullmqJob,
+        accessToken,
+        actorId,
+        ...extra,
+      });
     };
 
-    await supabaseKnowledgeRepository.updateSource(accessToken, sourceId, workspaceId, {
-      status: 'processing',
-      error_message: null,
-      settings: {
-        ...(source.settings ?? {}),
-        processing,
-      },
-    });
-
-    await supabaseKnowledgeRepository.addEvent(accessToken, {
-      workspaceId,
-      sourceId,
-      eventType: params.reprocess ? 'reprocess_started' : 'process_started',
-      message: params.reprocess ? 'Reprocessing started' : 'Processing started',
-      actorId: params.actorId,
-    });
+    const complete = async (
+      name: Parameters<typeof knowledgeJobProgressStore.completeStage>[0]['stage'],
+      extra?: { processedChunks?: number; totalChunks?: number | null },
+    ) => {
+      await knowledgeJobProgressStore.completeStage({
+        jobId,
+        stage: name,
+        bullmqJob,
+        accessToken,
+        actorId,
+        ...extra,
+      });
+    };
 
     try {
+      await stage('uploading');
+
+      const source = await supabaseKnowledgeRepository.assertSourceInWorkspace(
+        accessToken,
+        sourceId,
+        workspaceId,
+      );
+
+      const processing = {
+        ...supabaseKnowledgeRepository.readProcessingSettings(source),
+        ...(params.processing ?? {}),
+      };
+
+      await supabaseKnowledgeRepository.updateSource(accessToken, sourceId, workspaceId, {
+        status: 'processing',
+        error_message: null,
+        settings: {
+          ...(source.settings ?? {}),
+          processing,
+        },
+      });
+
+      const files = await supabaseKnowledgeRepository.listFiles(accessToken, sourceId);
+      // Uploading stage = verify / account for uploaded files (Hub uploads before process).
+      await complete('uploading');
+
       if (params.reprocess) {
         await supabaseKnowledgeRepository.deleteChunksForSource(accessToken, sourceId, workspaceId);
       }
 
-      const files = await supabaseKnowledgeRepository.listFiles(accessToken, sourceId);
-      const prepared: Array<{
+      await stage('extracting_text');
+
+      type Prepared = {
         content: string;
         token_count: number;
         source_page: number | null;
         knowledge_file_id: string | null;
         metadata: Record<string, unknown>;
-      }> = [];
-
-      // Manual text sources may have body in settings with zero files.
-      const textBody = (source.settings as { text?: { body?: string; title?: string } })?.text;
-      if (textBody?.body?.trim()) {
-        const chunks = chunkText(
-          textBody.body,
-          {
-            filename: textBody.title || source.name,
-            sourceType: 'text',
-          },
-          {
-            chunkSizeTokens: processing.chunkSize,
-            overlapTokens: processing.chunkOverlap,
-            removeDuplicates: processing.removeDuplicates,
-          },
-        );
-        for (const c of chunks) {
-          prepared.push({
-            content: c.content,
-            token_count: c.tokenCount,
-            source_page: null,
-            knowledge_file_id: null,
-            metadata: c.metadata,
-          });
-        }
-      }
-
+      };
+      const extracted: Prepared[] = [];
       const maxFiles = config.knowledge.maxFilesPerSource;
       const maxChars = config.knowledge.maxExtractedCharacters;
       const maxChunks = config.knowledge.maxChunksPerSource;
       let extractedChars = 0;
+
+      const textBody = (source.settings as { text?: { body?: string; title?: string } })?.text;
+      if (textBody?.body?.trim()) {
+        extracted.push({
+          content: textBody.body,
+          token_count: estimateTokens(textBody.body),
+          source_page: null,
+          knowledge_file_id: null,
+          metadata: {
+            filename: textBody.title || source.name,
+            sourceType: 'text',
+          },
+        });
+        extractedChars += textBody.body.length;
+      }
 
       for (const file of files.slice(0, maxFiles)) {
         if (!file.storage_path) continue;
@@ -131,26 +162,14 @@ export class KnowledgeProcessingService {
             if (extractedChars > maxChars) {
               throw new ValidationError('Extracted content exceeds maximum allowed size');
             }
-            const chunks = chunkText(segment.content, segment.metadata, {
-              chunkSizeTokens: processing.chunkSize,
-              overlapTokens: processing.chunkOverlap,
-              removeDuplicates: processing.removeDuplicates,
+            extracted.push({
+              content: segment.content,
+              token_count: estimateTokens(segment.content),
+              source_page:
+                typeof segment.metadata.page === 'number' ? segment.metadata.page : null,
+              knowledge_file_id: file.id,
+              metadata: segment.metadata,
             });
-            for (const c of chunks) {
-              if (prepared.length >= maxChunks) break;
-              prepared.push({
-                content: c.content,
-                token_count: c.tokenCount,
-                source_page:
-                  typeof segment.metadata.page === 'number'
-                    ? segment.metadata.page
-                    : typeof c.metadata.page === 'number'
-                      ? (c.metadata.page as number)
-                      : null,
-                knowledge_file_id: file.id,
-                metadata: c.metadata,
-              });
-            }
           }
 
           await supabaseKnowledgeRepository.updateFile(accessToken, file.id, {
@@ -170,9 +189,55 @@ export class KnowledgeProcessingService {
         }
       }
 
-      if (prepared.length === 0) {
+      if (extracted.length === 0) {
         throw new ValidationError('No content available to process for this knowledge source');
       }
+      await complete('extracting_text');
+
+      await stage('cleaning_content');
+      const cleaned = extracted.map((item) => ({
+        ...item,
+        content: normalizeWhitespace(item.content),
+      })).filter((item) => item.content.length > 0);
+      if (cleaned.length === 0) {
+        throw new ValidationError('No content remained after cleaning');
+      }
+      await complete('cleaning_content');
+
+      await stage('chunking');
+      const prepared: Prepared[] = [];
+      for (const item of cleaned) {
+        const chunks = chunkText(item.content, item.metadata, {
+          chunkSizeTokens: processing.chunkSize,
+          overlapTokens: processing.chunkOverlap,
+          removeDuplicates: processing.removeDuplicates,
+        });
+        for (const c of chunks) {
+          if (prepared.length >= maxChunks) break;
+          prepared.push({
+            content: c.content,
+            token_count: c.tokenCount,
+            source_page:
+              item.source_page ??
+              (typeof c.metadata.page === 'number' ? (c.metadata.page as number) : null),
+            knowledge_file_id: item.knowledge_file_id,
+            metadata: c.metadata,
+          });
+        }
+        if (prepared.length >= maxChunks) break;
+      }
+      if (prepared.length === 0) {
+        throw new ValidationError('Chunking produced no content');
+      }
+      await complete('chunking', {
+        processedChunks: 0,
+        totalChunks: prepared.length,
+      });
+
+      await stage('generating_embeddings', {
+        processedChunks: 0,
+        totalChunks: prepared.length,
+      });
 
       const provider = getAIProvider();
       const embedModel = processing.embeddingModel || config.ollama.embedModel;
@@ -189,7 +254,6 @@ export class KnowledgeProcessingService {
         embedding: string;
       }> = [];
 
-      // Batch embeddings in small groups to avoid oversized payloads.
       const batchSize = 8;
       for (let i = 0; i < prepared.length; i += batchSize) {
         const batch = prepared.slice(i, i + batchSize);
@@ -215,9 +279,36 @@ export class KnowledgeProcessingService {
             embedding: embeddingToPgVector(vector),
           });
         });
-      }
 
+        const processed = Math.min(i + batch.length, prepared.length);
+        await knowledgeJobProgressStore.setEmbeddingProgress({
+          jobId,
+          processedChunks: processed,
+          totalChunks: prepared.length,
+          progress: progressForEmbeddingWork(processed, prepared.length),
+          bullmqJob,
+          accessToken,
+        });
+      }
+      await complete('generating_embeddings', {
+        processedChunks: rows.length,
+        totalChunks: rows.length,
+      });
+
+      await stage('saving_chunks', {
+        processedChunks: rows.length,
+        totalChunks: rows.length,
+      });
       await supabaseKnowledgeRepository.insertChunks(accessToken, rows);
+      await complete('saving_chunks', {
+        processedChunks: rows.length,
+        totalChunks: rows.length,
+      });
+
+      await stage('indexing', {
+        processedChunks: rows.length,
+        totalChunks: rows.length,
+      });
 
       const wordCount = rows.reduce((n, r) => n + r.content.split(/\s+/).filter(Boolean).length, 0);
       const characterCount = rows.reduce((n, r) => n + r.content.length, 0);
@@ -232,24 +323,48 @@ export class KnowledgeProcessingService {
         last_processed_at: new Date().toISOString(),
         error_message: null,
       });
+      await complete('indexing', {
+        processedChunks: rows.length,
+        totalChunks: rows.length,
+      });
+
+      await knowledgeJobProgressStore.markCompleted({
+        jobId,
+        bullmqJob,
+        accessToken,
+        actorId,
+        processedChunks: rows.length,
+        totalChunks: rows.length,
+      });
 
       await supabaseKnowledgeRepository.addEvent(accessToken, {
         workspaceId,
         sourceId,
         eventType: 'process_completed',
         message: `Processed ${rows.length} chunks`,
-        actorId: params.actorId,
-        metadata: { chunkCount: rows.length },
+        actorId,
+        metadata: { jobId, chunkCount: rows.length },
       });
 
       logger.info(
-        { sourceId, workspaceId, chunkCount: rows.length },
+        { sourceId, workspaceId, chunkCount: rows.length, jobId },
         'Knowledge source processed',
       );
 
       return { status: 'ready', chunkCount: rows.length };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Processing failed';
+
+      await knowledgeJobProgressStore
+        .markFailed({
+          jobId,
+          error: message,
+          bullmqJob,
+          accessToken,
+          actorId,
+        })
+        .catch(() => undefined);
+
       await supabaseKnowledgeRepository
         .updateSource(accessToken, sourceId, workspaceId, {
           status: 'failed',
@@ -264,7 +379,8 @@ export class KnowledgeProcessingService {
           eventType: 'process_failed',
           message: message.slice(0, 500),
           level: 'error',
-          actorId: params.actorId,
+          actorId,
+          metadata: { jobId },
         })
         .catch(() => undefined);
 
@@ -272,15 +388,9 @@ export class KnowledgeProcessingService {
     }
   }
 
-  /** Used by queue workers — same path as HTTP process. */
-  async processSourceJob(payload: {
-    accessToken: string;
-    workspaceId: string;
-    sourceId: string;
-    processing?: Partial<ProcessingSettings>;
-    reprocess?: boolean;
-    actorId?: string;
-  }): Promise<{ status: string; chunkCount: number }> {
+  async processSourceJob(
+    payload: ProcessSourceParams,
+  ): Promise<{ status: string; chunkCount: number }> {
     return this.processSource(payload);
   }
 }
