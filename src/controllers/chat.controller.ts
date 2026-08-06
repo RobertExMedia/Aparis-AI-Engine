@@ -27,6 +27,7 @@ export class ChatController {
       request: parsed.data,
       userId: request.auth.userId,
       accessToken: request.auth.accessToken,
+      authMethod: request.auth.method,
     });
 
     recordUsage(request, {
@@ -88,6 +89,7 @@ export class ChatController {
         request: parsed.data,
         userId: request.auth.userId,
         accessToken: request.auth.accessToken,
+        authMethod: request.auth.method,
         signal: abort.signal,
       })) {
         if (abort.signal.aborted) break;

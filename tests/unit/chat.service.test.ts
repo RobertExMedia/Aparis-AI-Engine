@@ -40,6 +40,7 @@ vi.mock('../../src/services/workspace-authorization.service.js', () => ({
       userId: 'user-1',
       role: 'editor',
       canChat: true,
+      canViewRetrievalDebug: false,
     }),
   },
 }));
@@ -110,6 +111,14 @@ vi.mock('../../src/services/knowledge-retrieval.service.js', () => ({
       texts: [],
       citations: [],
       payload: { used: false, sources: [] },
+      debug: {
+        chunksRetrieved: 0,
+        chunks: [],
+        retrievalTimeMs: 1,
+        embeddingModel: 'nomic-embed-text',
+        topK: 8,
+        threshold: 0.25,
+      },
     }),
     buildGroundingBlock: vi.fn().mockReturnValue(undefined),
   },

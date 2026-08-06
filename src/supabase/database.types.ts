@@ -637,6 +637,30 @@ export type Database = {
         }
         Returns: Json
       }
+      match_knowledge_chunks: {
+        Args: {
+          query_embedding: string
+          match_workspace_id: string
+          match_agent_id: string
+          match_count?: number
+          match_threshold?: number
+        }
+        Returns: {
+          id: string
+          knowledge_source_id: string
+          knowledge_file_id: string | null
+          content: string
+          metadata: Json
+          source_page: number | null
+          similarity: number
+          source_name: string
+          file_name: string | null
+          source_url: string | null
+          priority: number
+          required: boolean
+          token_count: number | null
+        }[]
+      }
       current_user_can_edit_workspace: {
         Args: { _workspace_id: string }
         Returns: boolean

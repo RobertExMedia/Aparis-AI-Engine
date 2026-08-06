@@ -3,12 +3,14 @@ import { ForbiddenError, UnauthorizedError } from '../utils/errors.js';
 import type { WorkspaceRole } from '../types/index.js';
 
 const CHAT_ROLES: ReadonlySet<WorkspaceRole> = new Set(['owner', 'admin', 'editor']);
+const RETRIEVAL_DEBUG_ROLES: ReadonlySet<WorkspaceRole> = new Set(['owner', 'admin']);
 
 export interface WorkspaceAccess {
   workspaceId: string;
   userId: string;
   role: WorkspaceRole;
   canChat: boolean;
+  canViewRetrievalDebug: boolean;
 }
 
 /**
@@ -67,11 +69,21 @@ export class WorkspaceAuthorizationService {
       throw new ForbiddenError('You do not have permission to use this agent.');
     }
 
-    return { workspaceId, userId, role, canChat };
+    return {
+      workspaceId,
+      userId,
+      role,
+      canChat,
+      canViewRetrievalDebug: RETRIEVAL_DEBUG_ROLES.has(role),
+    };
   }
 
   canChat(role: WorkspaceRole): boolean {
     return CHAT_ROLES.has(role);
+  }
+
+  canViewRetrievalDebug(role: WorkspaceRole): boolean {
+    return RETRIEVAL_DEBUG_ROLES.has(role);
   }
 }
 

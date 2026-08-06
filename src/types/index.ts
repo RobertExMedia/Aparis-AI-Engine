@@ -13,7 +13,6 @@ export type AgentTone =
   | 'enthusiastic'
   | 'empathetic'
   | 'technical';
-
 /** Supabase user identity attached by authenticateSupabaseUser */
 export interface SupabaseAuthContext {
   method: 'supabase';
@@ -50,6 +49,11 @@ export interface DashboardChatRequest {
   agentId: string;
   conversationId?: string;
   message: string;
+  /**
+   * Request retrieval debug on the response.
+   * Honored only for workspace owner/admin on Supabase auth — never for widgets/API keys.
+   */
+  retrievalDebug?: boolean;
 }
 
 export interface TokenUsage {
@@ -63,6 +67,28 @@ export interface CreditsBalance {
   remaining: number | null;
   used: number;
   limit: number | null;
+}
+
+/** Per-chunk retrieval details for admin prompt-engineering / debugging. */
+export interface RetrievalDebugChunk {
+  chunkId: string;
+  content: string;
+  similarity: number;
+  knowledgeSource: string;
+  sourceId: string;
+  tokenCount: number;
+  fileName?: string;
+  page?: number;
+}
+
+/** Admin-only retrieval diagnostics (never for public widgets). */
+export interface RetrievalDebug {
+  chunksRetrieved: number;
+  chunks: RetrievalDebugChunk[];
+  retrievalTimeMs: number;
+  embeddingModel: string;
+  topK: number;
+  threshold: number;
 }
 
 export interface DashboardChatResponse {
@@ -89,6 +115,8 @@ export interface DashboardChatResponse {
       similarity: number;
     }>;
   };
+  /** Admin-only retrieval diagnostics. Omitted for editors and all widget/API-key callers. */
+  retrievalDebug?: RetrievalDebug;
 }
 
 export interface EmbeddingRequest {

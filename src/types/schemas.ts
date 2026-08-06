@@ -6,6 +6,8 @@ export const dashboardChatBodySchema = z
     agentId: z.string().uuid(),
     conversationId: z.string().uuid().optional(),
     message: z.string().min(1).max(32_000),
+    /** Opt-in retrieval debug; only returned for workspace owner/admin. */
+    retrievalDebug: z.boolean().optional(),
   })
   .strict();
 
@@ -34,6 +36,11 @@ export const dashboardChatBodyJsonSchema = {
     message: {
       type: 'string',
       description: 'User message. systemPrompt is never accepted from the client.',
+    },
+    retrievalDebug: {
+      type: 'boolean',
+      description:
+        'When true, include retrieval diagnostics if the caller is a workspace owner/admin. Never returned for public widget users.',
     },
   },
 } as const;
@@ -74,6 +81,33 @@ export const dashboardChatResponseJsonSchema = {
       properties: {
         used: { type: 'boolean' },
         sources: { type: 'array', items: { type: 'object', additionalProperties: true } },
+      },
+    },
+    retrievalDebug: {
+      type: 'object',
+      description: 'Workspace owner/admin only. Omitted for editors and public widgets.',
+      properties: {
+        chunksRetrieved: { type: 'integer' },
+        chunks: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              chunkId: { type: 'string' },
+              content: { type: 'string' },
+              similarity: { type: 'number' },
+              knowledgeSource: { type: 'string' },
+              sourceId: { type: 'string' },
+              tokenCount: { type: 'integer' },
+              fileName: { type: 'string' },
+              page: { type: 'integer' },
+            },
+          },
+        },
+        retrievalTimeMs: { type: 'integer' },
+        embeddingModel: { type: 'string' },
+        topK: { type: 'integer' },
+        threshold: { type: 'number' },
       },
     },
   },

@@ -10,12 +10,16 @@ import { aiCreditsService } from './ai-credits.service.js';
 import { ValidationError, AiUnavailableError, ForbiddenError, CreditsExhaustedError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import type { ChatKnowledgePayload } from '../knowledge/types.js';
+import { canViewRetrievalDebug } from '../knowledge/retrieval-debug.js';
 import type {
   AgentConfiguration,
+  AuthMethod,
   CreditsBalance,
   DashboardChatRequest,
   DashboardChatResponse,
   ChatMessage,
+  RetrievalDebug,
+  WorkspaceRole,
 } from '../types/index.js';
 
 function resolveModel(agent: AgentConfiguration): string {
@@ -39,14 +43,17 @@ export class ChatService {
     request: DashboardChatRequest;
     userId: string;
     accessToken: string;
+    /** Defaults to supabase. Widget/API-key callers never receive retrievalDebug. */
+    authMethod?: AuthMethod;
     signal?: AbortSignal;
   }): Promise<DashboardChatResponse> {
     const { request, userId, accessToken, signal } = params;
+    const authMethod: AuthMethod = params.authMethod ?? 'supabase';
     this.validate(request);
     const requestId = uuidv4();
     const started = Date.now();
 
-    await workspaceAuthorizationService.assertMembership({
+    const access = await workspaceAuthorizationService.assertMembership({
       accessToken,
       userId,
       workspaceId: request.workspaceId,
@@ -80,6 +87,13 @@ export class ChatService {
       accessToken,
       conversationId: conversation.id,
       requestId,
+    });
+
+    const retrievalDebug = this.resolveRetrievalDebug({
+      authMethod,
+      role: access.role,
+      requested: Boolean(request.retrievalDebug),
+      debug: built.retrievalDebug,
     });
 
     const model = resolveModel(agent);
@@ -163,6 +177,7 @@ export class ChatService {
         },
         credits: settled.credits,
         knowledge: built.knowledge,
+        ...(retrievalDebug ? { retrievalDebug } : {}),
       };
     } catch (err) {
       // Persist the user turn even when generation fails so history stays continuous.
@@ -207,6 +222,7 @@ export class ChatService {
     request: DashboardChatRequest;
     userId: string;
     accessToken: string;
+    authMethod?: AuthMethod;
     signal?: AbortSignal;
   }): AsyncGenerator<
     | { event: 'start'; data: { requestId: string; conversationId: string } }
@@ -225,17 +241,19 @@ export class ChatService {
             totalTokens: number;
           };
           credits?: CreditsBalance;
+          retrievalDebug?: RetrievalDebug;
         };
       }
     | { event: 'error'; data: { message: string } }
   > {
     const { request, userId, accessToken, signal } = params;
+    const authMethod: AuthMethod = params.authMethod ?? 'supabase';
     this.validate(request);
     const requestId = uuidv4();
     const started = Date.now();
 
     try {
-      await workspaceAuthorizationService.assertMembership({
+      const access = await workspaceAuthorizationService.assertMembership({
         accessToken,
         userId,
         workspaceId: request.workspaceId,
@@ -274,6 +292,13 @@ export class ChatService {
         accessToken,
         conversationId: conversation.id,
         requestId,
+      });
+
+      const retrievalDebug = this.resolveRetrievalDebug({
+        authMethod,
+        role: access.role,
+        requested: Boolean(request.retrievalDebug),
+        debug: built.retrievalDebug,
       });
 
       const model = resolveModel(agent);
@@ -403,6 +428,7 @@ export class ChatService {
             totalTokens: settled.totalTokens,
           },
           credits: settled.credits,
+          ...(retrievalDebug ? { retrievalDebug } : {}),
         },
       };
     } catch (err) {
@@ -433,6 +459,7 @@ export class ChatService {
     messages: ChatMessage[];
     historyMessageCount: number;
     knowledge: ChatKnowledgePayload;
+    retrievalDebug: RetrievalDebug;
   }> {
     const { request, agent, accessToken, conversationId, requestId } = params;
 
@@ -478,7 +505,30 @@ export class ChatService {
       messages: built.messages,
       historyMessageCount: priorTurns.length,
       knowledge: retrieved.payload,
+      retrievalDebug: retrieved.debug,
     };
+  }
+
+  /**
+   * Strip retrieval debug unless the caller opted in AND is a workspace owner/admin
+   * on a Supabase (Hub) session — never for public widgets / API keys.
+   */
+  private resolveRetrievalDebug(params: {
+    authMethod: AuthMethod;
+    role: WorkspaceRole;
+    requested: boolean;
+    debug: RetrievalDebug;
+  }): RetrievalDebug | undefined {
+    if (
+      !canViewRetrievalDebug({
+        authMethod: params.authMethod,
+        role: params.role,
+        requested: params.requested,
+      })
+    ) {
+      return undefined;
+    }
+    return params.debug;
   }
 
   private async resolveConversation(params: {

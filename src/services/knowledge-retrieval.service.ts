@@ -1,6 +1,7 @@
 import { config } from '../config/index.js';
 import { getAIProvider } from '../providers/index.js';
 import type { ChatKnowledgePayload, KnowledgeCitation } from '../knowledge/types.js';
+import type { RetrievalDebug } from '../types/index.js';
 import { supabaseKnowledgeRepository } from '../repositories/supabase/knowledge.repository.js';
 import { aiCreditsService } from './ai-credits.service.js';
 import { estimateTokens } from '../utils/crypto.js';
@@ -11,6 +12,19 @@ export interface KnowledgeRetrievalResult {
   texts: string[];
   citations: KnowledgeCitation[];
   payload: ChatKnowledgePayload;
+  /** Always computed; attach to chat responses only when admin debug is allowed. */
+  debug: RetrievalDebug;
+}
+
+function emptyDebug(partial?: Partial<RetrievalDebug>): RetrievalDebug {
+  return {
+    chunksRetrieved: 0,
+    chunks: [],
+    retrievalTimeMs: partial?.retrievalTimeMs ?? 0,
+    embeddingModel: partial?.embeddingModel ?? config.ollama.embedModel,
+    topK: partial?.topK ?? config.knowledge.topK,
+    threshold: partial?.threshold ?? config.knowledge.similarityThreshold,
+  };
 }
 
 /**
@@ -25,20 +39,40 @@ export class KnowledgeRetrievalService {
     topK?: number;
     threshold?: number;
   }): Promise<KnowledgeRetrievalResult> {
+    const topK = params.topK ?? config.knowledge.topK;
+    const threshold = params.threshold ?? config.knowledge.similarityThreshold;
+    const embeddingModel = config.ollama.embedModel;
+    const started = Date.now();
+
     const query = params.query.trim();
     if (!query) {
-      return { texts: [], citations: [], payload: { used: false, sources: [] } };
+      return {
+        texts: [],
+        citations: [],
+        payload: { used: false, sources: [] },
+        debug: emptyDebug({ topK, threshold, embeddingModel, retrievalTimeMs: 0 }),
+      };
     }
 
     try {
       const provider = getAIProvider();
       const { embeddings } = await provider.embeddings({
         input: query,
-        model: config.ollama.embedModel,
+        model: embeddingModel,
       });
       const embedding = embeddings[0];
       if (!embedding?.length) {
-        return { texts: [], citations: [], payload: { used: false, sources: [] } };
+        return {
+          texts: [],
+          citations: [],
+          payload: { used: false, sources: [] },
+          debug: emptyDebug({
+            topK,
+            threshold,
+            embeddingModel,
+            retrievalTimeMs: Date.now() - started,
+          }),
+        };
       }
 
       await aiCreditsService.settle({
@@ -48,7 +82,7 @@ export class KnowledgeRetrievalService {
         completionTokens: 0,
         endpoint: 'knowledge/retrieve',
         agentId: params.agentId,
-        model: config.ollama.embedModel,
+        model: embeddingModel,
         status: 'success',
       });
 
@@ -56,9 +90,11 @@ export class KnowledgeRetrievalService {
         embedding,
         workspaceId: params.workspaceId,
         agentId: params.agentId,
-        topK: params.topK ?? config.knowledge.topK,
-        threshold: params.threshold ?? config.knowledge.similarityThreshold,
+        topK,
+        threshold,
       });
+
+      const retrievalTimeMs = Date.now() - started;
 
       const citations: KnowledgeCitation[] = rows.map((row) => {
         const meta = row.metadata ?? {};
@@ -84,10 +120,38 @@ export class KnowledgeRetrievalService {
         return `[${label}${page}]\n${row.content}`;
       });
 
+      const debug: RetrievalDebug = {
+        chunksRetrieved: rows.length,
+        chunks: rows.map((row) => {
+          const tokenCount =
+            typeof row.token_count === 'number' && Number.isFinite(row.token_count)
+              ? Math.max(0, Math.floor(row.token_count))
+              : estimateTokens(row.content);
+          const chunk = {
+            chunkId: row.id,
+            content: row.content,
+            similarity: row.similarity,
+            knowledgeSource: row.source_name,
+            sourceId: row.knowledge_source_id,
+            tokenCount,
+          };
+          return {
+            ...chunk,
+            ...(row.file_name ? { fileName: row.file_name } : {}),
+            ...(row.source_page != null ? { page: row.source_page } : {}),
+          };
+        }),
+        retrievalTimeMs,
+        embeddingModel,
+        topK,
+        threshold,
+      };
+
       return {
         texts,
         citations,
         payload: { used: citations.length > 0, sources: citations },
+        debug,
       };
     } catch (err) {
       if (err instanceof CreditsExhaustedError) throw err;
@@ -100,7 +164,17 @@ export class KnowledgeRetrievalService {
         },
         'Knowledge retrieval failed; continuing without knowledge context',
       );
-      return { texts: [], citations: [], payload: { used: false, sources: [] } };
+      return {
+        texts: [],
+        citations: [],
+        payload: { used: false, sources: [] },
+        debug: emptyDebug({
+          topK,
+          threshold,
+          embeddingModel,
+          retrievalTimeMs: Date.now() - started,
+        }),
+      };
     }
   }
 

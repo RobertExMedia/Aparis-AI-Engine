@@ -164,6 +164,7 @@ describe('WorkspaceAuthorizationService', () => {
     });
     expect(access.role).toBe('editor');
     expect(access.canChat).toBe(true);
+    expect(access.canViewRetrievalDebug).toBe(false);
   });
 
   it('allows owner', async () => {
@@ -184,6 +185,7 @@ describe('WorkspaceAuthorizationService', () => {
       workspaceId: '00000000-0000-4000-8000-000000000001',
     });
     expect(access.role).toBe('owner');
+    expect(access.canViewRetrievalDebug).toBe(true);
   });
 });
 

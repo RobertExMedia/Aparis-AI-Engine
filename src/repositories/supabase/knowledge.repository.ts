@@ -369,6 +369,7 @@ export class SupabaseKnowledgeRepository {
       source_url: string | null;
       priority: number;
       required: boolean;
+      token_count: number | null;
     }>
   > {
     const { data, error } = await kb(accessToken).rpc('match_knowledge_chunks', {
@@ -392,6 +393,7 @@ export class SupabaseKnowledgeRepository {
       source_url: string | null;
       priority: number;
       required: boolean;
+      token_count: number | null;
     }>;
   }
 
