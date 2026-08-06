@@ -10,6 +10,9 @@ export async function registerRateLimit(app: FastifyInstance): Promise<void> {
     timeWindow: config.rateLimit.windowMs,
     redis: redis as never,
     keyGenerator: (request) => {
+      if (request.auth?.method === 'widget') {
+        return `rl:widget:${request.auth.widgetKeyId}:${request.ip}`;
+      }
       if (request.auth?.method === 'supabase' && request.auth.userId) {
         return `rl:user:${request.auth.userId}`;
       }
@@ -18,6 +21,8 @@ export async function registerRateLimit(app: FastifyInstance): Promise<void> {
           ? request.auth.workspaceId
           : undefined;
       if (workspaceId) return `rl:ws:${workspaceId}`;
+      const widgetKey = request.headers['x-widget-key'];
+      if (typeof widgetKey === 'string') return `rl:wpk:${widgetKey.slice(0, 16)}:${request.ip}`;
       const apiKey = request.headers['x-api-key'];
       if (typeof apiKey === 'string') return `rl:key:${apiKey.slice(0, 16)}`;
       return `rl:ip:${request.ip}`;

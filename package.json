@@ -16,7 +16,8 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "generate-api-key": "node dist/cli/generate-api-key.js",
-    "verify-api-key": "node dist/cli/verify-api-key.js"
+    "verify-api-key": "node dist/cli/verify-api-key.js",
+    "generate-widget-key": "node dist/cli/generate-widget-key.js"
   },
   "engines": {
     "node": ">=22"

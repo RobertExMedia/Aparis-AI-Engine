@@ -490,6 +490,78 @@ export type Database = {
           },
         ]
       }
+      agent_domains: {
+        Row: {
+          id: string
+          workspace_id: string
+          agent_id: string
+          domain: string
+          status: string
+          verified_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          workspace_id: string
+          agent_id: string
+          domain: string
+          status?: string
+          verified_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          workspace_id?: string
+          agent_id?: string
+          domain?: string
+          status?: string
+          verified_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      widget_keys: {
+        Row: {
+          id: string
+          workspace_id: string
+          agent_id: string
+          name: string
+          key_hash: string
+          key_prefix: string
+          is_active: boolean
+          last_used_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          workspace_id: string
+          agent_id: string
+          name?: string
+          key_hash: string
+          key_prefix: string
+          is_active?: boolean
+          last_used_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          workspace_id?: string
+          agent_id?: string
+          name?: string
+          key_hash?: string
+          key_prefix?: string
+          is_active?: boolean
+          last_used_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       workspace_credits: {
         Row: {
           workspace_id: string

@@ -1,5 +1,9 @@
-import { createUserSupabaseClient } from '../../supabase/client.js';
-import { ForbiddenError, NotFoundError } from '../../utils/errors.js';
+import {
+  createUserSupabaseClient,
+  getServiceSupabaseClient,
+  hasServiceRoleKey,
+} from '../../supabase/client.js';
+import { AppError, ForbiddenError, NotFoundError } from '../../utils/errors.js';
 import { throwSupabaseError } from '../../utils/supabase-error.js';
 import { KNOWLEDGE_BUCKET } from '../../knowledge/types.js';
 import type {
@@ -13,7 +17,16 @@ import { DEFAULT_PROCESSING_SETTINGS } from '../../knowledge/types.js';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type KbClient = any;
 
-function kb(accessToken: string): KbClient {
+function kb(accessToken?: string, useServiceRole = false): KbClient {
+  if (useServiceRole) {
+    if (!hasServiceRoleKey()) {
+      throw new AppError('Service role is not configured', 503, 'WIDGET_UNAVAILABLE');
+    }
+    return getServiceSupabaseClient();
+  }
+  if (!accessToken) {
+    throw new AppError('Missing access token', 401, 'UNAUTHORIZED');
+  }
   return createUserSupabaseClient(accessToken);
 }
 
@@ -347,13 +360,14 @@ export class SupabaseKnowledgeRepository {
   }
 
   async matchChunks(
-    accessToken: string,
+    accessToken: string | undefined,
     params: {
       embedding: number[];
       workspaceId: string;
       agentId: string;
       topK: number;
       threshold: number;
+      useServiceRole?: boolean;
     },
   ): Promise<
     Array<{
@@ -372,13 +386,16 @@ export class SupabaseKnowledgeRepository {
       token_count: number | null;
     }>
   > {
-    const { data, error } = await kb(accessToken).rpc('match_knowledge_chunks', {
-      query_embedding: JSON.stringify(params.embedding),
-      match_workspace_id: params.workspaceId,
-      match_agent_id: params.agentId,
-      match_count: params.topK,
-      match_threshold: params.threshold,
-    });
+    const { data, error } = await kb(accessToken, params.useServiceRole).rpc(
+      'match_knowledge_chunks',
+      {
+        query_embedding: JSON.stringify(params.embedding),
+        match_workspace_id: params.workspaceId,
+        match_agent_id: params.agentId,
+        match_count: params.topK,
+        match_threshold: params.threshold,
+      },
+    );
     if (error) throwSupabaseError('Failed to retrieve knowledge chunks', error);
     return (data ?? []) as Array<{
       id: string;

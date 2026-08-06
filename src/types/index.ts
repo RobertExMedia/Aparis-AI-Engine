@@ -1,4 +1,4 @@
-export type AuthMethod = 'supabase' | 'api_key';
+export type AuthMethod = 'supabase' | 'api_key' | 'widget';
 
 export type AuthRole = 'USER' | 'ADMIN' | 'SERVICE';
 
@@ -13,6 +13,13 @@ export type AgentTone =
   | 'enthusiastic'
   | 'empathetic'
   | 'technical';
+
+/** Conversation channels — widget traffic must stay isolated from playground. */
+export type ConversationChannel = 'playground' | 'website_widget';
+
+export const WIDGET_CHANNEL: ConversationChannel = 'website_widget';
+export const PLAYGROUND_CHANNEL: ConversationChannel = 'playground';
+
 /** Supabase user identity attached by authenticateSupabaseUser */
 export interface SupabaseAuthContext {
   method: 'supabase';
@@ -36,7 +43,17 @@ export interface ApiKeyAuthContext {
   role?: string;
 }
 
-export type AuthContext = SupabaseAuthContext | ApiKeyAuthContext;
+/** Public website widget — never carries a Supabase user JWT. */
+export interface WidgetAuthContext {
+  method: 'widget';
+  workspaceId: string;
+  agentId: string;
+  agentPublicId: string;
+  widgetKeyId: string;
+  originHost: string;
+}
+
+export type AuthContext = SupabaseAuthContext | ApiKeyAuthContext | WidgetAuthContext;
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -54,6 +71,29 @@ export interface DashboardChatRequest {
    * Honored only for workspace owner/admin on Supabase auth — never for widgets/API keys.
    */
   retrievalDebug?: boolean;
+}
+
+export interface WidgetChatRequest {
+  /** Agent public id (agt_…). */
+  agentId: string;
+  conversationId?: string;
+  message: string;
+}
+
+/** Slim citation for website embeds. */
+export interface WidgetCitation {
+  sourceName: string;
+  similarity: number;
+  page?: number;
+  url?: string;
+}
+
+/** Lightweight widget chat response — no playground internals. */
+export interface WidgetChatResponse {
+  conversationId: string;
+  message: { role: 'assistant'; content: string };
+  citations: WidgetCitation[];
+  credits?: CreditsBalance;
 }
 
 export interface TokenUsage {
@@ -182,6 +222,7 @@ export interface AgentConfiguration {
 declare module 'fastify' {
   interface FastifyRequest {
     auth?: AuthContext;
+    widgetAgent?: AgentConfiguration;
     usageMeta?: {
       messageCount: number;
       promptTokens?: number;

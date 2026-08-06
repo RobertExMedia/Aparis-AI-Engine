@@ -25,6 +25,8 @@ export async function buildApp() {
           'req.headers.Authorization',
           'req.headers["x-api-key"]',
           'req.headers["X-API-Key"]',
+          'req.headers["x-widget-key"]',
+          'req.headers["X-Widget-Key"]',
           'req.headers.cookie',
           'req.headers.Cookie',
           'res.headers["set-cookie"]',
@@ -63,7 +65,14 @@ export async function buildApp() {
         cb(null, true);
         return;
       }
-      cb(null, config.allowedOrigins.includes(origin));
+      // Hub / Studio origins
+      if (config.allowedOrigins.includes(origin)) {
+        cb(null, true);
+        return;
+      }
+      // Third-party widget embeds: reflect Origin.
+      // Domain whitelist is enforced in authenticateWidget (not CORS alone).
+      cb(null, true);
     },
     credentials: true,
   });
@@ -89,6 +98,8 @@ export async function buildApp() {
           '**Agent source of truth:** Supabase `agents` table from aparis-ai-hub (system_prompt loaded server-side; never accepted from the client).',
           '',
           '**API keys:** `X-API-Key` is reserved for trusted server-to-server integrations only — not for the Hub playground.',
+          '',
+          '**Website widget:** `POST /api/v1/widget/chat` uses `X-Widget-Key` (wpk_…) + Origin domain whitelist. Never send a Supabase JWT from the browser widget. Conversations are stored with channel `website_widget` (isolated from playground). Requires `SUPABASE_SERVICE_ROLE_KEY` on the Engine.',
         ].join('\n'),
         version: config.app.version,
         contact: { name: 'Aparis', url: 'https://aparis.io' },
@@ -101,6 +112,7 @@ export async function buildApp() {
         { name: 'Root', description: 'Service root' },
         { name: 'Health', description: 'Health & readiness' },
         { name: 'Chat', description: 'Dashboard chat (Supabase auth)' },
+        { name: 'Widget', description: 'Public website widget (widget key + domain)' },
         { name: 'Models', description: 'Available AI models (server-to-server)' },
       ],
       components: {
@@ -116,6 +128,12 @@ export async function buildApp() {
             in: 'header',
             name: 'X-API-Key',
             description: 'Server-to-server only — not for Hub playground',
+          },
+          widgetKeyAuth: {
+            type: 'apiKey',
+            in: 'header',
+            name: 'X-Widget-Key',
+            description: 'Public widget key (wpk_…). Must match an allowed Origin domain.',
           },
         },
       },

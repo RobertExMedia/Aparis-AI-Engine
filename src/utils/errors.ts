@@ -82,6 +82,18 @@ export class CreditsExhaustedError extends AppError {
   }
 }
 
+export class DomainNotAllowedError extends AppError {
+  constructor(message = 'This domain is not authorized to use this widget.') {
+    super(message, 403, 'DOMAIN_NOT_ALLOWED');
+  }
+}
+
+export class WidgetKeyUnauthorizedError extends AppError {
+  constructor(message = 'Invalid or inactive widget key.') {
+    super(message, 401, 'WIDGET_UNAUTHORIZED');
+  }
+}
+
 export class AiUnavailableError extends AppError {
   constructor(
     message = 'The AI service is temporarily unavailable. Please try again shortly.',

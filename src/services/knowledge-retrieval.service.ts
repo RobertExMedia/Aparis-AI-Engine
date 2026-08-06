@@ -32,7 +32,8 @@ function emptyDebug(partial?: Partial<RetrievalDebug>): RetrievalDebug {
  */
 export class KnowledgeRetrievalService {
   async retrieve(params: {
-    accessToken: string;
+    accessToken?: string;
+    useServiceRole?: boolean;
     workspaceId: string;
     agentId: string;
     query: string;
@@ -77,10 +78,11 @@ export class KnowledgeRetrievalService {
 
       await aiCreditsService.settle({
         accessToken: params.accessToken,
+        useServiceRole: params.useServiceRole,
         workspaceId: params.workspaceId,
         promptTokens: estimateTokens(query),
         completionTokens: 0,
-        endpoint: 'knowledge/retrieve',
+        endpoint: params.useServiceRole ? 'widget/knowledge/retrieve' : 'knowledge/retrieve',
         agentId: params.agentId,
         model: embeddingModel,
         status: 'success',
@@ -92,6 +94,7 @@ export class KnowledgeRetrievalService {
         agentId: params.agentId,
         topK,
         threshold,
+        useServiceRole: params.useServiceRole,
       });
 
       const retrievalTimeMs = Date.now() - started;

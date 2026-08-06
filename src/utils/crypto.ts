@@ -16,6 +16,11 @@ export function generateApiKey(prefix = 'apk'): { key: string; hash: string; key
   };
 }
 
+/** Public website widget key (safe to embed; gated by domain whitelist). */
+export function generateWidgetKey(): { key: string; hash: string; keyPrefix: string } {
+  return generateApiKey('wpk');
+}
+
 export function safeCompare(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
   const bufB = Buffer.from(b);

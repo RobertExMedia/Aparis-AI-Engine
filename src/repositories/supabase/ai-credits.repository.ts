@@ -1,4 +1,9 @@
-import { createUserSupabaseClient } from '../../supabase/client.js';
+import {
+  createUserSupabaseClient,
+  getServiceSupabaseClient,
+  hasServiceRoleKey,
+  type AppSupabaseClient,
+} from '../../supabase/client.js';
 import type { Json } from '../../supabase/database.types.js';
 import { logger } from '../../utils/logger.js';
 import { CreditsExhaustedError, AppError } from '../../utils/errors.js';
@@ -12,7 +17,8 @@ export interface WorkspaceCreditsRow {
 }
 
 export interface ConsumeCreditsParams {
-  accessToken: string;
+  accessToken?: string;
+  useServiceRole?: boolean;
   workspaceId: string;
   credits: number;
   promptTokens: number;
@@ -50,9 +56,37 @@ function parseCreditsPayload(data: unknown): WorkspaceCreditsRow | null {
   };
 }
 
+function resolveCreditsClient(params: {
+  accessToken?: string;
+  useServiceRole?: boolean;
+}): AppSupabaseClient {
+  if (params.useServiceRole) {
+    if (!hasServiceRoleKey()) {
+      throw new AppError(
+        'Unable to verify AI credits for this workspace.',
+        503,
+        'CREDITS_UNAVAILABLE',
+      );
+    }
+    return getServiceSupabaseClient();
+  }
+  if (!params.accessToken) {
+    throw new AppError(
+      'Unable to verify AI credits for this workspace.',
+      503,
+      'CREDITS_UNAVAILABLE',
+    );
+  }
+  return createUserSupabaseClient(params.accessToken);
+}
+
 export class AiCreditsRepository {
-  async getBalance(accessToken: string, workspaceId: string): Promise<WorkspaceCreditsRow> {
-    const client = createUserSupabaseClient(accessToken);
+  async getBalance(
+    accessToken: string | undefined,
+    workspaceId: string,
+    useServiceRole = false,
+  ): Promise<WorkspaceCreditsRow> {
+    const client = resolveCreditsClient({ accessToken, useServiceRole });
     const { data, error } = await client.rpc('get_workspace_credits', {
       _workspace_id: workspaceId,
     });
@@ -80,11 +114,14 @@ export class AiCreditsRepository {
     return row;
   }
 
-  async assertAvailable(accessToken: string, workspaceId: string): Promise<CreditsSnapshot> {
-    const row = await this.getBalance(accessToken, workspaceId);
+  async assertAvailable(
+    accessToken: string | undefined,
+    workspaceId: string,
+    useServiceRole = false,
+  ): Promise<CreditsSnapshot> {
+    const row = await this.getBalance(accessToken, workspaceId, useServiceRole);
     const snapshot = toCreditsSnapshot(row);
 
-    // Unlimited
     if (row.monthly_credits === null || row.remaining_credits === null) {
       return snapshot;
     }
@@ -100,7 +137,10 @@ export class AiCreditsRepository {
   }
 
   async consume(params: ConsumeCreditsParams): Promise<ConsumeCreditsResult> {
-    const client = createUserSupabaseClient(params.accessToken);
+    const client = resolveCreditsClient({
+      accessToken: params.accessToken,
+      useServiceRole: params.useServiceRole,
+    });
     const { data, error } = await client.rpc('consume_workspace_credits', {
       _workspace_id: params.workspaceId,
       _credits: params.credits,

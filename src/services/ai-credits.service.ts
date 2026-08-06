@@ -8,7 +8,8 @@ import { aiCreditsRepository } from '../repositories/supabase/ai-credits.reposit
 import { logger } from '../utils/logger.js';
 
 export interface SettleAiCreditsParams {
-  accessToken: string;
+  accessToken?: string;
+  useServiceRole?: boolean;
   workspaceId: string;
   promptTokens?: number | null;
   completionTokens?: number | null;
@@ -36,12 +37,20 @@ export interface SettleAiCreditsResult {
  * AI Credits service — conversion + ledger. Billing/Stripe stay out of this layer.
  */
 export class AiCreditsService {
-  async assertAvailable(accessToken: string, workspaceId: string): Promise<CreditsSnapshot> {
-    return aiCreditsRepository.assertAvailable(accessToken, workspaceId);
+  async assertAvailable(
+    accessToken: string | undefined,
+    workspaceId: string,
+    useServiceRole = false,
+  ): Promise<CreditsSnapshot> {
+    return aiCreditsRepository.assertAvailable(accessToken, workspaceId, useServiceRole);
   }
 
-  async getBalance(accessToken: string, workspaceId: string): Promise<CreditsSnapshot> {
-    const row = await aiCreditsRepository.getBalance(accessToken, workspaceId);
+  async getBalance(
+    accessToken: string | undefined,
+    workspaceId: string,
+    useServiceRole = false,
+  ): Promise<CreditsSnapshot> {
+    const row = await aiCreditsRepository.getBalance(accessToken, workspaceId, useServiceRole);
     return {
       remaining: row.remaining_credits,
       used: row.used_credits,
@@ -103,6 +112,7 @@ export class AiCreditsService {
 
     const result = await aiCreditsRepository.consume({
       accessToken: params.accessToken,
+      useServiceRole: params.useServiceRole,
       workspaceId: params.workspaceId,
       credits: charge,
       promptTokens: tokens.promptTokens,
