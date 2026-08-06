@@ -1,17 +1,19 @@
 import type { FastifyInstance } from 'fastify';
 import { modelsController } from '../controllers/models.controller.js';
-import { authenticateApiKeyOnly } from '../middleware/auth.js';
+import { authenticateSupabaseOrApiKey } from '../middleware/auth.js';
 import { errorResponseJsonSchema } from '../types/schemas.js';
 
 export async function modelsRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     '/models',
     {
-      preHandler: [authenticateApiKeyOnly],
+      preHandler: [authenticateSupabaseOrApiKey],
       schema: {
         tags: ['Models'],
-        summary: 'List installed Ollama models (server-to-server)',
-        security: [{ apiKeyAuth: [] }],
+        summary: 'List installed Ollama models',
+        description:
+          'Accepts a Supabase Bearer JWT (any workspace member, including viewer) or a server-to-server X-API-Key. Same response for both auth methods.',
+        security: [{ supabaseBearer: [] }, { apiKeyAuth: [] }],
         response: {
           200: {
             type: 'object',
@@ -34,6 +36,7 @@ export async function modelsRoutes(app: FastifyInstance): Promise<void> {
             },
           },
           401: errorResponseJsonSchema,
+          403: errorResponseJsonSchema,
         },
       },
     },

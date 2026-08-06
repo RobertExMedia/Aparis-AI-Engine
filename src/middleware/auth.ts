@@ -5,6 +5,7 @@ import { hashApiKey, safeCompare } from '../utils/crypto.js';
 import { UnauthorizedError, ForbiddenError } from '../utils/errors.js';
 import { prisma } from '../config/database.js';
 import { logger } from '../utils/logger.js';
+import { workspaceAuthorizationService } from '../services/workspace-authorization.service.js';
 import type { ApiKeyAuthContext, AuthContext } from '../types/index.js';
 
 function extractBearer(header?: string): string | null {
@@ -171,6 +172,46 @@ export async function authenticateApiKeyOnly(
 
   logApiKeyAuthDebug(undefined);
   throw new UnauthorizedError('API key required');
+}
+
+function looksLikeApiKeyBearer(bearer: string): boolean {
+  return (
+    bearer.startsWith('apk_') ||
+    isMasterApiKey(bearer) ||
+    matchesEnvApiKeyHash(bearer)
+  );
+}
+
+/**
+ * Accepts either a Supabase Bearer JWT or an X-API-Key / apk_ Bearer key.
+ * For Supabase users, requires membership in at least one workspace (any role, including viewer).
+ * Used by GET /models — does not change chat or widget auth.
+ */
+export async function authenticateSupabaseOrApiKey(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const apiKeyHeader = request.headers['x-api-key'];
+  if (typeof apiKeyHeader === 'string' && apiKeyHeader.length > 0) {
+    return authenticateApiKeyOnly(request, reply);
+  }
+
+  const bearer = extractBearer(request.headers.authorization);
+  if (!bearer) {
+    throw new UnauthorizedError('Authentication required');
+  }
+
+  if (looksLikeApiKeyBearer(bearer)) {
+    return authenticateApiKeyOnly(request, reply);
+  }
+
+  await authenticateSupabaseUser(request, reply);
+  requireSupabaseAuth(request.auth);
+
+  await workspaceAuthorizationService.assertAnyWorkspaceMembership({
+    accessToken: request.auth.accessToken,
+    userId: request.auth.userId,
+  });
 }
 
 /** @deprecated Prefer authenticateSupabaseUser for Hub routes. */

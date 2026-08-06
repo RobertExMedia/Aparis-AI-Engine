@@ -85,6 +85,35 @@ export class WorkspaceAuthorizationService {
   canViewRetrievalDebug(role: WorkspaceRole): boolean {
     return RETRIEVAL_DEBUG_ROLES.has(role);
   }
+
+  /**
+   * Requires membership in at least one workspace (any role, including viewer).
+   * Used for read-only Hub endpoints such as listing models.
+   */
+  async assertAnyWorkspaceMembership(params: {
+    accessToken: string;
+    userId: string;
+  }): Promise<{ workspaceId: string; role: WorkspaceRole }> {
+    const { accessToken, userId } = params;
+    if (!userId) throw new UnauthorizedError();
+
+    const userClient = createUserSupabaseClient(accessToken);
+    const { data: memberships, error } = await userClient
+      .from('workspace_members')
+      .select('workspace_id, role')
+      .eq('user_id', userId)
+      .limit(1);
+
+    const membership = memberships?.[0];
+    if (error || !membership) {
+      throw new ForbiddenError('You do not have access to any workspace.');
+    }
+
+    return {
+      workspaceId: membership.workspace_id,
+      role: membership.role as WorkspaceRole,
+    };
+  }
 }
 
 export const workspaceAuthorizationService = new WorkspaceAuthorizationService();
