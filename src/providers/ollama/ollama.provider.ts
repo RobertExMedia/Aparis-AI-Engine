@@ -244,21 +244,19 @@ export class OllamaProvider implements AIProvider {
       }
       return { ok: true, latencyMs: Date.now() - start, model: resolved };
     } catch (err) {
-      const message =
+      const wrapped =
         err instanceof AiUnavailableError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : 'Embedding probe failed';
+          ? err
+          : this.wrapError(err, 'embeddings', model);
       logger.error(
         {
           operation: 'embeddingHealth',
           model,
-          message: message.replace(/https?:\/\/[^\s]+/gi, '[redacted-host]'),
+          message: wrapped.message.replace(/https?:\/\/[^\s]+/gi, '[redacted-host]'),
         },
         'Ollama embedding health check failed',
       );
-      return { ok: false, latencyMs: Date.now() - start, message };
+      return { ok: false, latencyMs: Date.now() - start, message: wrapped.message, model };
     }
   }
 
@@ -319,7 +317,14 @@ export class OllamaProvider implements AIProvider {
       }
     }
 
-    if (lastErr) throw lastErr;
+    if (lastErr) {
+      if (axios.isAxiosError(lastErr) && lastErr.response?.status === 404) {
+        throw new AiUnavailableError(
+          `Embedding endpoint returned 404 for model "${model}". On the AI host: (1) run "ollama pull ${model}", (2) ensure nginx proxies /api/embed and /api/embeddings to Ollama (not only /api/chat and /api/tags).`,
+        );
+      }
+      throw lastErr;
+    }
     throw new AiUnavailableError(
       'Embedding generation failed. The AI service returned an empty result.',
     );
@@ -515,9 +520,10 @@ export class OllamaProvider implements AIProvider {
         'Ollama provider error',
       );
       if (operation === 'embeddings') {
+        const modelName = embedModel ?? this.defaultEmbedModel;
         if (status === 404 || (body && /model/i.test(body) && /not found/i.test(body))) {
           return new AiUnavailableError(
-            `Embedding model "${embedModel ?? this.defaultEmbedModel}" is not installed on the AI host. Install it with: ollama pull ${embedModel ?? this.defaultEmbedModel}`,
+            `Embedding returned 404 for "${modelName}". On the AI host run "ollama pull ${modelName}" and proxy /api/embed (and /api/embeddings) to Ollama.`,
           );
         }
         if (status === 403) {
