@@ -75,13 +75,13 @@ export class KnowledgeProcessingService {
   async processSource(params: ProcessSourceParams): Promise<{ status: string; chunkCount: number }> {
     const { accessToken, workspaceId, sourceId, jobId, bullmqJob, actorId } = params;
     let savedChunkCount = 0;
-    let lastStage: KnowledgeProcessingStage = 'uploading';
+    const ctx: { lastStage: KnowledgeProcessingStage } = { lastStage: 'uploading' };
 
     const stage = async (
       name: Parameters<typeof knowledgeJobProgressStore.enterStage>[0]['stage'],
       extra?: { processedChunks?: number; totalChunks?: number | null },
     ) => {
-      lastStage = name;
+      ctx.lastStage = name;
       await knowledgeJobProgressStore.enterStage({
         jobId,
         stage: name,
@@ -96,7 +96,7 @@ export class KnowledgeProcessingService {
       name: Parameters<typeof knowledgeJobProgressStore.completeStage>[0]['stage'],
       extra?: { processedChunks?: number; totalChunks?: number | null },
     ) => {
-      lastStage = name;
+      ctx.lastStage = name;
       await knowledgeJobProgressStore.completeStage({
         jobId,
         stage: name,
@@ -426,7 +426,7 @@ export class KnowledgeProcessingService {
         }
 
         const stageHint =
-          lastStage === 'generating_embeddings'
+          ctx.lastStage === 'generating_embeddings'
             ? `Embedding interrupted (${savedChunkCount} chunk(s) saved). `
             : '';
 
@@ -450,7 +450,7 @@ export class KnowledgeProcessingService {
             actorId,
             metadata: {
               jobId,
-              failedStage: lastStage,
+              failedStage: ctx.lastStage,
               savedChunkCount: chunkCount,
               finalAttempt: true,
             },
@@ -466,7 +466,7 @@ export class KnowledgeProcessingService {
             sourceId,
             workspaceId,
             attempt: (bullmqJob?.attemptsMade ?? 0) + 1,
-            failedStage: lastStage,
+            failedStage: ctx.lastStage,
             savedChunkCount,
             err: message,
           },
