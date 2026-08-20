@@ -56,6 +56,12 @@ export interface KnowledgeJobProgress {
   /** 0–100, based on completed stages / chunk work only. */
   progress: number;
   currentStage: KnowledgeProcessingStage;
+  /**
+   * Last real pipeline stage when the job failed.
+   * `currentStage` becomes `failed`; clients should use this for banners
+   * (e.g. "Embedding failed at 12/40 chunks").
+   */
+  failedStage?: KnowledgeProcessingStage | null;
   startedAt: string | null;
   finishedAt: string | null;
   /** Milliseconds; null when not enough real progress to estimate. */

@@ -204,25 +204,39 @@ export class OllamaProvider implements AIProvider {
     const inputs = Array.isArray(request.input) ? request.input : [request.input];
 
     try {
-      try {
-        const { data } = await this.client.post<OllamaEmbedResponse>(
-          this.embeddingsEndpoint,
-          { model, input: inputs },
-        );
-        const embeddings = data.embeddings ?? (data.embedding ? [data.embedding] : []);
-        return { embeddings, model };
-      } catch {
+      return await this.withRetry(async () => {
+        try {
+          const { data } = await this.client.post<OllamaEmbedResponse>(
+            this.embeddingsEndpoint,
+            { model, input: inputs },
+          );
+          const embeddings = data.embeddings ?? (data.embedding ? [data.embedding] : []);
+          if (embeddings.length === inputs.length) {
+            return { embeddings, model };
+          }
+        } catch {
+          // Fall through to per-input prompt API (older Ollama shape).
+        }
+
         const embeddings: number[][] = [];
         for (const input of inputs) {
-          const { data } = await this.client.post<{ embedding: number[] }>(
-            this.embeddingsEndpoint,
-            { model, prompt: input },
+          const { data } = await this.withRetry(() =>
+            this.client.post<{ embedding: number[] }>(this.embeddingsEndpoint, {
+              model,
+              prompt: input,
+            }),
           );
+          if (!data.embedding?.length) {
+            throw new AiUnavailableError(
+              'Embedding generation failed. The AI service returned an empty result.',
+            );
+          }
           embeddings.push(data.embedding);
         }
         return { embeddings, model };
-      }
+      });
     } catch (err) {
+      if (err instanceof AiUnavailableError) throw err;
       throw this.wrapError(err, 'embeddings');
     }
   }
@@ -317,6 +331,7 @@ export class OllamaProvider implements AIProvider {
   private wrapError(err: unknown, operation: string): AiUnavailableError {
     if (axios.isAxiosError(err)) {
       const status = err.response?.status;
+      const timedOut = err.code === 'ECONNABORTED';
       logger.error(
         {
           operation,
@@ -327,6 +342,13 @@ export class OllamaProvider implements AIProvider {
         },
         'Ollama provider error',
       );
+      if (operation === 'embeddings') {
+        return new AiUnavailableError(
+          timedOut
+            ? 'Embedding timed out. The AI service is busy — please try again shortly.'
+            : 'Embedding failed. The AI service is temporarily unavailable. Please try again shortly.',
+        );
+      }
       return new AiUnavailableError();
     }
     logger.error({ err, operation }, 'Ollama provider unexpected error');

@@ -249,11 +249,18 @@ export class KnowledgeController {
       workspaceId: job.workspaceId,
     });
 
-    const label = displayStageName(job.currentStage);
+    const label =
+      job.status === 'failed' && job.failedStage
+        ? displayStageName(job.failedStage)
+        : displayStageName(job.currentStage);
     return reply.send({
       ...toJobApiResponse(job),
       current_stage_label: label,
       stageLabel: label,
+      failed_stage_label:
+        job.failedStage != null ? displayStageName(job.failedStage) : null,
+      failedStageLabel:
+        job.failedStage != null ? displayStageName(job.failedStage) : null,
     });
   }
 

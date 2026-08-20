@@ -283,9 +283,15 @@ export class KnowledgeJobProgressStore {
     if (params.error && !errors.includes(params.error)) {
       errors.push(params.error.slice(0, 1000));
     }
+    const lastStage = current?.currentStage;
+    const failedStage =
+      lastStage && lastStage !== 'failed' && lastStage !== 'completed'
+        ? lastStage
+        : (current?.failedStage ?? null);
     return this.update(params.jobId, {
       status: 'failed',
       currentStage: 'failed',
+      failedStage,
       // Keep last real progress; do not invent 100 on failure.
       progress: current?.progress ?? 0,
       finishedAt: new Date().toISOString(),
@@ -328,6 +334,7 @@ export class KnowledgeJobProgressStore {
             status: record.status,
             progress: record.progress,
             currentStage: record.currentStage,
+            failedStage: record.failedStage ?? null,
             startedAt: record.startedAt,
             finishedAt: record.finishedAt,
             estimatedRemainingMs: record.estimatedRemainingMs,
@@ -347,11 +354,13 @@ export const knowledgeJobProgressStore = new KnowledgeJobProgressStore();
 /** Poll response shape for GET /knowledge/jobs/:id (snake_case + camelCase aliases). */
 export function toJobApiResponse(job: KnowledgeJobProgress) {
   const estimatedRemainingMs = estimateRemainingMs(job.startedAt, job.progress);
+  const failedStage = job.failedStage ?? null;
   return {
     id: job.id,
     status: job.status,
     progress: job.progress,
     current_stage: job.currentStage,
+    failed_stage: failedStage,
     current_stage_label: undefined as string | undefined,
     started_at: job.startedAt,
     finished_at: job.finishedAt,
@@ -363,6 +372,7 @@ export function toJobApiResponse(job: KnowledgeJobProgress) {
     source_id: job.sourceId,
     // camelCase aliases for clients already wired that way
     currentStage: job.currentStage,
+    failedStage,
     stageLabel: undefined as string | undefined,
     startedAt: job.startedAt,
     finishedAt: job.finishedAt,

@@ -102,16 +102,24 @@ export function startKnowledgeWorker(): Worker | null {
       { jobId: job?.id, sourceId: job?.data.sourceId, err: err.message },
       'Knowledge process job failed',
     );
-    if (job?.id) {
-      void knowledgeJobProgressStore
-        .markFailed({
+    // Safety net for crashes that bypass processSource catch. Skip when the
+    // service already recorded final failure (or when BullMQ will retry).
+    if (!job?.id) return;
+    const maxAttempts = job.opts.attempts ?? 1;
+    const exhausted = job.attemptsMade >= maxAttempts;
+    if (!exhausted) return;
+    void knowledgeJobProgressStore
+      .get(String(job.id))
+      .then((snapshot) => {
+        if (snapshot?.status === 'failed') return;
+        return knowledgeJobProgressStore.markFailed({
           jobId: String(job.id),
           error: err.message,
           accessToken: job.data.accessToken,
           actorId: job.data.actorId,
-        })
-        .catch(() => undefined);
-    }
+        });
+      })
+      .catch(() => undefined);
   });
 
   worker.on('completed', (job) => {

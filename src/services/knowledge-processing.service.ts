@@ -8,6 +8,7 @@ import type { ProcessingSettings } from '../knowledge/types.js';
 import { NOMIC_EMBED_DIMENSIONS } from '../knowledge/types.js';
 import {
   progressForEmbeddingWork,
+  type KnowledgeProcessingStage,
 } from '../knowledge/processing-stages.js';
 import { supabaseKnowledgeRepository } from '../repositories/supabase/knowledge.repository.js';
 import { knowledgeJobProgressStore } from './knowledge-job-progress.service.js';
@@ -24,6 +25,13 @@ function embeddingToPgVector(values: number[]): string {
   return `[${values.join(',')}]`;
 }
 
+/** True when this BullMQ attempt is the last one (no further automatic retries). */
+export function isFinalKnowledgeAttempt(bullmqJob?: Job): boolean {
+  if (!bullmqJob) return true;
+  const maxAttempts = bullmqJob.opts.attempts ?? 1;
+  return bullmqJob.attemptsMade + 1 >= maxAttempts;
+}
+
 export interface ProcessSourceParams {
   accessToken: string;
   workspaceId: string;
@@ -35,18 +43,45 @@ export interface ProcessSourceParams {
   bullmqJob?: Job;
 }
 
+type Prepared = {
+  content: string;
+  token_count: number;
+  source_page: number | null;
+  knowledge_file_id: string | null;
+  metadata: Record<string, unknown>;
+};
+
+type ChunkRow = {
+  knowledge_source_id: string;
+  knowledge_file_id: string | null;
+  workspace_id: string;
+  chunk_index: number;
+  content: string;
+  token_count: number;
+  source_page: number | null;
+  embedding_status: string;
+  metadata: Record<string, unknown>;
+  embedding: string;
+};
+
 /**
  * Real multi-stage knowledge processing pipeline.
  * Each stage updates Redis + BullMQ progress + Supabase (source settings / events).
+ *
+ * Embeddings are persisted per batch so a mid-run AI outage keeps partial chunks
+ * instead of discarding the whole job.
  */
 export class KnowledgeProcessingService {
   async processSource(params: ProcessSourceParams): Promise<{ status: string; chunkCount: number }> {
     const { accessToken, workspaceId, sourceId, jobId, bullmqJob, actorId } = params;
+    let savedChunkCount = 0;
+    let lastStage: KnowledgeProcessingStage = 'uploading';
 
     const stage = async (
       name: Parameters<typeof knowledgeJobProgressStore.enterStage>[0]['stage'],
       extra?: { processedChunks?: number; totalChunks?: number | null },
     ) => {
+      lastStage = name;
       await knowledgeJobProgressStore.enterStage({
         jobId,
         stage: name,
@@ -61,6 +96,7 @@ export class KnowledgeProcessingService {
       name: Parameters<typeof knowledgeJobProgressStore.completeStage>[0]['stage'],
       extra?: { processedChunks?: number; totalChunks?: number | null },
     ) => {
+      lastStage = name;
       await knowledgeJobProgressStore.completeStage({
         jobId,
         stage: name,
@@ -98,19 +134,12 @@ export class KnowledgeProcessingService {
       // Uploading stage = verify / account for uploaded files (Hub uploads before process).
       await complete('uploading');
 
-      if (params.reprocess) {
-        await supabaseKnowledgeRepository.deleteChunksForSource(accessToken, sourceId, workspaceId);
-      }
+      // Always clear prior chunks so retries / reprocess never duplicate rows.
+      // Within a single attempt, batches are saved incrementally (kept on final failure).
+      await supabaseKnowledgeRepository.deleteChunksForSource(accessToken, sourceId, workspaceId);
 
       await stage('extracting_text');
 
-      type Prepared = {
-        content: string;
-        token_count: number;
-        source_page: number | null;
-        knowledge_file_id: string | null;
-        metadata: Record<string, unknown>;
-      };
       const extracted: Prepared[] = [];
       const maxFiles = config.knowledge.maxFilesPerSource;
       const maxChars = config.knowledge.maxExtractedCharacters;
@@ -244,32 +273,27 @@ export class KnowledgeProcessingService {
 
       const provider = getAIProvider();
       const embedModel = processing.embeddingModel || config.ollama.embedModel;
-      const rows: Array<{
-        knowledge_source_id: string;
-        knowledge_file_id: string | null;
-        workspace_id: string;
-        chunk_index: number;
-        content: string;
-        token_count: number;
-        source_page: number | null;
-        embedding_status: string;
-        metadata: Record<string, unknown>;
-        embedding: string;
-      }> = [];
+      // Smaller batches reduce Ollama timeouts / OOM on larger customer docs.
+      const batchSize = 4;
+      let wordCount = 0;
+      let characterCount = 0;
 
-      const batchSize = 8;
       for (let i = 0; i < prepared.length; i += batchSize) {
         const batch = prepared.slice(i, i + batchSize);
         const embedded = await provider.embeddings({
           input: batch.map((b) => b.content),
           model: embedModel,
         });
+
+        const batchRows: ChunkRow[] = [];
         batch.forEach((item, idx) => {
           const vector = embedded.embeddings[idx];
           if (!vector) {
             throw new ValidationError('Embedding provider returned incomplete results');
           }
-          rows.push({
+          wordCount += item.content.split(/\s+/).filter(Boolean).length;
+          characterCount += item.content.length;
+          batchRows.push({
             knowledge_source_id: sourceId,
             knowledge_file_id: item.knowledge_file_id,
             workspace_id: workspaceId,
@@ -283,6 +307,10 @@ export class KnowledgeProcessingService {
           });
         });
 
+        // Persist each batch immediately so a later AI outage keeps partial work.
+        await supabaseKnowledgeRepository.insertChunks(accessToken, batchRows);
+        savedChunkCount += batchRows.length;
+
         const processed = Math.min(i + batch.length, prepared.length);
         await knowledgeJobProgressStore.setEmbeddingProgress({
           jobId,
@@ -294,8 +322,8 @@ export class KnowledgeProcessingService {
         });
       }
       await complete('generating_embeddings', {
-        processedChunks: rows.length,
-        totalChunks: rows.length,
+        processedChunks: savedChunkCount,
+        totalChunks: prepared.length,
       });
 
       const embedPromptTokens = prepared.reduce((n, p) => n + (p.token_count || 0), 0);
@@ -308,31 +336,29 @@ export class KnowledgeProcessingService {
         requestId: jobId,
         model: embedModel,
         status: 'success',
-        metadata: { sourceId, chunkCount: rows.length },
+        metadata: { sourceId, chunkCount: savedChunkCount },
       });
 
       await stage('saving_chunks', {
-        processedChunks: rows.length,
-        totalChunks: rows.length,
+        processedChunks: savedChunkCount,
+        totalChunks: savedChunkCount,
       });
-      await supabaseKnowledgeRepository.insertChunks(accessToken, rows);
+      // Chunks already written per batch; this stage finalizes counts for the UI.
       await complete('saving_chunks', {
-        processedChunks: rows.length,
-        totalChunks: rows.length,
+        processedChunks: savedChunkCount,
+        totalChunks: savedChunkCount,
       });
 
       await stage('indexing', {
-        processedChunks: rows.length,
-        totalChunks: rows.length,
+        processedChunks: savedChunkCount,
+        totalChunks: savedChunkCount,
       });
 
-      const wordCount = rows.reduce((n, r) => n + r.content.split(/\s+/).filter(Boolean).length, 0);
-      const characterCount = rows.reduce((n, r) => n + r.content.length, 0);
       const storageBytes = files.reduce((n, f) => n + (f.file_size || 0), 0);
 
       await supabaseKnowledgeRepository.updateSource(accessToken, sourceId, workspaceId, {
         status: 'ready',
-        chunk_count: rows.length,
+        chunk_count: savedChunkCount,
         word_count: wordCount,
         character_count: characterCount,
         storage_bytes: storageBytes,
@@ -340,8 +366,8 @@ export class KnowledgeProcessingService {
         error_message: null,
       });
       await complete('indexing', {
-        processedChunks: rows.length,
-        totalChunks: rows.length,
+        processedChunks: savedChunkCount,
+        totalChunks: savedChunkCount,
       });
 
       await knowledgeJobProgressStore.markCompleted({
@@ -349,56 +375,104 @@ export class KnowledgeProcessingService {
         bullmqJob,
         accessToken,
         actorId,
-        processedChunks: rows.length,
-        totalChunks: rows.length,
+        processedChunks: savedChunkCount,
+        totalChunks: savedChunkCount,
       });
 
       await supabaseKnowledgeRepository.addEvent(accessToken, {
         workspaceId,
         sourceId,
         eventType: 'process_completed',
-        message: `Processed ${rows.length} chunks`,
+        message: `Processed ${savedChunkCount} chunks`,
         actorId,
-        metadata: { jobId, chunkCount: rows.length },
+        metadata: { jobId, chunkCount: savedChunkCount },
       });
 
       logger.info(
-        { sourceId, workspaceId, chunkCount: rows.length, jobId },
+        { sourceId, workspaceId, chunkCount: savedChunkCount, jobId },
         'Knowledge source processed',
       );
 
-      return { status: 'ready', chunkCount: rows.length };
+      return { status: 'ready', chunkCount: savedChunkCount };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Processing failed';
+      const finalAttempt = isFinalKnowledgeAttempt(bullmqJob);
 
-      await knowledgeJobProgressStore
-        .markFailed({
-          jobId,
-          error: message,
-          bullmqJob,
-          accessToken,
-          actorId,
-        })
-        .catch(() => undefined);
+      if (finalAttempt) {
+        await knowledgeJobProgressStore
+          .markFailed({
+            jobId,
+            error: message,
+            bullmqJob,
+            accessToken,
+            actorId,
+          })
+          .catch(() => undefined);
 
-      await supabaseKnowledgeRepository
-        .updateSource(accessToken, sourceId, workspaceId, {
-          status: 'failed',
-          error_message: message.slice(0, 1000),
-        })
-        .catch(() => undefined);
+        // Keep any chunks already embedded in this attempt; surface partial counts.
+        let partialWordCount = 0;
+        let partialCharacterCount = 0;
+        let chunkCount = savedChunkCount;
+        try {
+          const partial = await supabaseKnowledgeRepository.listChunks(accessToken, sourceId);
+          chunkCount = partial.length;
+          partialWordCount = partial.reduce(
+            (n, r) => n + r.content.split(/\s+/).filter(Boolean).length,
+            0,
+          );
+          partialCharacterCount = partial.reduce((n, r) => n + r.content.length, 0);
+        } catch {
+          // ignore — still mark failed below
+        }
 
-      await supabaseKnowledgeRepository
-        .addEvent(accessToken, {
-          workspaceId,
-          sourceId,
-          eventType: 'process_failed',
-          message: message.slice(0, 500),
-          level: 'error',
-          actorId,
-          metadata: { jobId },
-        })
-        .catch(() => undefined);
+        const stageHint =
+          lastStage === 'generating_embeddings'
+            ? `Embedding interrupted (${savedChunkCount} chunk(s) saved). `
+            : '';
+
+        await supabaseKnowledgeRepository
+          .updateSource(accessToken, sourceId, workspaceId, {
+            status: 'failed',
+            chunk_count: chunkCount,
+            word_count: partialWordCount,
+            character_count: partialCharacterCount,
+            error_message: `${stageHint}${message}`.slice(0, 1000),
+          })
+          .catch(() => undefined);
+
+        await supabaseKnowledgeRepository
+          .addEvent(accessToken, {
+            workspaceId,
+            sourceId,
+            eventType: 'process_failed',
+            message: message.slice(0, 500),
+            level: 'error',
+            actorId,
+            metadata: {
+              jobId,
+              failedStage: lastStage,
+              savedChunkCount: chunkCount,
+              finalAttempt: true,
+            },
+          })
+          .catch(() => undefined);
+      } else {
+        // Intermediate BullMQ attempt — keep source "processing" so the UI does not
+        // flash Failed while automatic retries are still running. Next attempt clears
+        // and rebuilds chunks from scratch.
+        logger.warn(
+          {
+            jobId,
+            sourceId,
+            workspaceId,
+            attempt: (bullmqJob?.attemptsMade ?? 0) + 1,
+            failedStage: lastStage,
+            savedChunkCount,
+            err: message,
+          },
+          'Knowledge process attempt failed; BullMQ will retry',
+        );
+      }
 
       throw err;
     }
