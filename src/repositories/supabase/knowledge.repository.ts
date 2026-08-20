@@ -4,7 +4,7 @@ import {
   hasServiceRoleKey,
 } from '../../supabase/client.js';
 import { AppError, ForbiddenError, NotFoundError } from '../../utils/errors.js';
-import { throwSupabaseError } from '../../utils/supabase-error.js';
+import { throwSupabaseError, type SupabaseErrorLike } from '../../utils/supabase-error.js';
 import { KNOWLEDGE_BUCKET } from '../../knowledge/types.js';
 import type {
   KnowledgeStatus,
@@ -12,6 +12,11 @@ import type {
   ProcessingSettings,
 } from '../../knowledge/types.js';
 import { DEFAULT_PROCESSING_SETTINGS } from '../../knowledge/types.js';
+import {
+  buildSanitizedStoragePath,
+  isInvalidStorageKeyError,
+  parseKnowledgeStoragePath,
+} from '../../knowledge/storage-path.js';
 
 /** Untyped client until Database types are fully regenerated from Hub. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -218,11 +223,83 @@ export class SupabaseKnowledgeRepository {
   async downloadFile(
     accessToken: string,
     storagePath: string,
+    options?: { fileId?: string; useServiceRole?: boolean },
   ): Promise<Buffer> {
-    const { data, error } = await kb(accessToken).storage.from(KNOWLEDGE_BUCKET).download(storagePath);
-    if (error || !data) throwSupabaseError('Failed to download knowledge file', error);
-    const ab = await data.arrayBuffer();
-    return Buffer.from(ab);
+    const client = kb(accessToken, options?.useServiceRole);
+    const tried = new Set<string>();
+    const candidates: string[] = [];
+
+    const push = (path: string) => {
+      if (!tried.has(path)) {
+        tried.add(path);
+        candidates.push(path);
+      }
+    };
+
+    push(storagePath.trim());
+    const sanitized = buildSanitizedStoragePath(storagePath);
+    if (sanitized) push(sanitized);
+
+    let lastError: SupabaseErrorLike = null;
+
+    for (const path of candidates) {
+      const { data, error } = await client.storage.from(KNOWLEDGE_BUCKET).download(path);
+      if (!error && data) {
+        const ab = await data.arrayBuffer();
+        return Buffer.from(ab);
+      }
+      lastError = error;
+      if (!isInvalidStorageKeyError(error?.message)) break;
+    }
+
+    const resolved = await this.resolveStoragePathByListing(client, storagePath, options?.fileId);
+    if (resolved) {
+      const { data, error } = await client.storage.from(KNOWLEDGE_BUCKET).download(resolved);
+      if (!error && data) {
+        const ab = await data.arrayBuffer();
+        return Buffer.from(ab);
+      }
+      lastError = error;
+    }
+
+    throwSupabaseError('Failed to download knowledge file', lastError);
+  }
+
+  /**
+   * When `storage_path` contains characters Supabase rejects, locate the object
+   * by upload UUID prefix or knowledge_files.id inside the source folder.
+   */
+  private async resolveStoragePathByListing(
+    client: KbClient,
+    storagePath: string,
+    fileId?: string,
+  ): Promise<string | null> {
+    const parsed = parseKnowledgeStoragePath(storagePath);
+    if (!parsed) return null;
+
+    const searchTerms = [parsed.uploadId, fileId].filter(
+      (v): v is string => typeof v === 'string' && v.length > 0,
+    );
+    if (searchTerms.length === 0) return null;
+
+    for (const term of searchTerms) {
+      const { data, error } = await client.storage.from(KNOWLEDGE_BUCKET).list(parsed.prefix, {
+        limit: 100,
+        search: term,
+      });
+      if (error || !data?.length) continue;
+
+      const match =
+        data.find((row: { name?: string }) => row.name?.startsWith(`${term}-`)) ??
+        data.find((row: { name?: string }) => row.name === term) ??
+        data.find((row: { name?: string }) => row.name?.includes(term));
+
+      if (match?.name) {
+        return `${parsed.prefix}/${match.name}`;
+      }
+    }
+
+    return null;
   }
 
   async deleteChunksForSource(accessToken: string, sourceId: string, workspaceId: string): Promise<void> {

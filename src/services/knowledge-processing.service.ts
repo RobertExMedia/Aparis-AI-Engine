@@ -1,6 +1,7 @@
 import type { Job } from 'bullmq';
 import { config } from '../config/index.js';
 import { getAIProvider } from '../providers/index.js';
+import { OllamaProvider } from '../providers/ollama/ollama.provider.js';
 import { chunkText, estimateTokens } from '../knowledge/chunker.js';
 import { resolveParser } from '../knowledge/parsers/index.js';
 import { normalizeWhitespace } from '../knowledge/parsers/types.js';
@@ -13,7 +14,9 @@ import {
 import { supabaseKnowledgeRepository } from '../repositories/supabase/knowledge.repository.js';
 import { knowledgeJobProgressStore } from './knowledge-job-progress.service.js';
 import { aiCreditsService } from './ai-credits.service.js';
-import { ValidationError } from '../utils/errors.js';
+import { isInvalidStorageKeyError } from '../knowledge/storage-path.js';
+import { hasServiceRoleKey } from '../supabase/client.js';
+import { ValidationError, AiUnavailableError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
 function embeddingToPgVector(values: number[]): string {
@@ -180,6 +183,7 @@ export class KnowledgeProcessingService {
           const buffer = await supabaseKnowledgeRepository.downloadFile(
             accessToken,
             file.storage_path,
+            { fileId: file.id, useServiceRole: hasServiceRoleKey() },
           );
           const parser = resolveParser(file.file_name, file.file_type);
           const segments = await parser.parse(buffer, {
@@ -210,12 +214,15 @@ export class KnowledgeProcessingService {
                 : null,
           });
         } catch (err) {
-          const message = err instanceof Error ? err.message : 'File processing failed';
+          const raw = err instanceof Error ? err.message : 'File processing failed';
+          const message = isInvalidStorageKeyError(raw)
+            ? 'Could not read this file from storage. Re-upload with a simple ASCII filename (letters, numbers, hyphens only).'
+            : raw;
           await supabaseKnowledgeRepository.updateFile(accessToken, file.id, {
             status: 'failed',
             error_message: message.slice(0, 500),
           });
-          throw err;
+          throw err instanceof Error ? new ValidationError(message) : err;
         }
       }
 
@@ -273,8 +280,19 @@ export class KnowledgeProcessingService {
 
       const provider = getAIProvider();
       const embedModel = processing.embeddingModel || config.ollama.embedModel;
-      // Smaller batches reduce Ollama timeouts / OOM on larger customer docs.
-      const batchSize = 4;
+
+      if (provider instanceof OllamaProvider) {
+        const probe = await provider.embeddingHealth(embedModel);
+        if (!probe.ok) {
+          throw new AiUnavailableError(
+            probe.message ??
+              'Embedding service is unavailable. Verify nomic-embed-text is installed on the AI host.',
+          );
+        }
+      }
+
+      // One chunk per request — most reliable through Ollama proxies and on first model load.
+      const batchSize = 1;
       let wordCount = 0;
       let characterCount = 0;
 

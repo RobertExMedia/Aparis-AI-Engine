@@ -184,6 +184,7 @@ export interface HealthCheckResult {
     database: ComponentHealth;
     redis: ComponentHealth;
     ollama: ComponentHealth;
+    ollamaEmbeddings: ComponentHealth;
     supabase: ComponentHealth;
     disk: ComponentHealth;
     memory: ComponentHealth;

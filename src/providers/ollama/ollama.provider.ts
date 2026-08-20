@@ -202,48 +202,120 @@ export class OllamaProvider implements AIProvider {
   }
 
   async embeddings(request: EmbeddingRequest): Promise<EmbeddingResponse> {
-    const model = request.model ?? this.defaultEmbedModel;
+    const requestedModel = request.model ?? this.defaultEmbedModel;
     const inputs = Array.isArray(request.input) ? request.input : [request.input];
 
     try {
-      return await this.withRetry(async () => {
-        const vectors = await this.requestEmbeddings(model, inputs);
-        if (vectors.length !== inputs.length) {
-          throw new AiUnavailableError(
-            'Embedding generation failed. The AI service returned an incomplete result.',
-          );
-        }
-        return { embeddings: vectors, model };
-      });
+      const model = await this.resolveEmbedModel(requestedModel);
+      return await this.withRetry(
+        async () => {
+          const vectors = await this.requestEmbeddings(model, inputs);
+          if (vectors.length !== inputs.length) {
+            throw new AiUnavailableError(
+              'Embedding generation failed. The AI service returned an incomplete result.',
+            );
+          }
+          return { embeddings: vectors, model };
+        },
+        3,
+        [1_000, 2_000, 4_000],
+      );
     } catch (err) {
       if (err instanceof AiUnavailableError) throw err;
-      throw this.wrapError(err, 'embeddings');
+      throw this.wrapError(err, 'embeddings', requestedModel);
+    }
+  }
+
+  /** Verifies the embed model responds — tags-only health is not enough for knowledge jobs. */
+  async embeddingHealth(
+    model = this.defaultEmbedModel,
+  ): Promise<{ ok: boolean; latencyMs: number; message?: string; model?: string }> {
+    const start = Date.now();
+    try {
+      const resolved = await this.resolveEmbedModel(model);
+      const vectors = await this.requestEmbeddings(resolved, ['health-check']);
+      if (!vectors[0]?.length) {
+        return {
+          ok: false,
+          latencyMs: Date.now() - start,
+          message: 'Embedding probe returned empty vectors',
+          model: resolved,
+        };
+      }
+      return { ok: true, latencyMs: Date.now() - start, model: resolved };
+    } catch (err) {
+      const message =
+        err instanceof AiUnavailableError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Embedding probe failed';
+      logger.error(
+        {
+          operation: 'embeddingHealth',
+          model,
+          message: message.replace(/https?:\/\/[^\s]+/gi, '[redacted-host]'),
+        },
+        'Ollama embedding health check failed',
+      );
+      return { ok: false, latencyMs: Date.now() - start, message };
     }
   }
 
   /**
-   * Ollama hosts may expose different embed APIs:
-   * - /api/embed (current, batched `input`)
-   * - /api/embeddings (legacy, `prompt` per item)
-   * - /v1/embeddings (OpenAI-compatible)
+   * Ollama hosts may expose different embed APIs. Prefer sequential /api/embed
+   * (works through stricter proxies) before batched calls.
    */
   private async requestEmbeddings(model: string, inputs: string[]): Promise<number[][]> {
-    const strategies: Array<() => Promise<number[][] | null>> = [
-      () => this.postEmbedBatch(this.embedEndpoint, { model, input: inputs }),
-      () => this.postEmbedBatch(this.embeddingsEndpoint, { model, input: inputs }),
-      () => this.postOpenAiEmbeddings(model, inputs),
-      () => this.postLegacyPromptEmbeddings(model, inputs),
+    const strategies: Array<{ name: string; run: () => Promise<number[][] | null> }> = [
+      {
+        name: 'embed_sequential',
+        run: () => this.postEmbedSequential(this.embedEndpoint, model, inputs),
+      },
+      {
+        name: 'embed_batch',
+        run: () => this.postEmbedBatch(this.embedEndpoint, { model, input: inputs }),
+      },
+      {
+        name: 'openai_embeddings',
+        run: () => this.postOpenAiEmbeddings(model, inputs),
+      },
+      {
+        name: 'legacy_prompt',
+        run: () => this.postLegacyPromptEmbeddings(model, inputs),
+      },
+      {
+        name: 'embeddings_batch',
+        run: () => this.postEmbedBatch(this.embeddingsEndpoint, { model, input: inputs }),
+      },
+      {
+        name: 'embeddings_sequential',
+        run: () => this.postEmbedSequential(this.embeddingsEndpoint, model, inputs),
+      },
     ];
 
     let lastErr: unknown;
     for (const strategy of strategies) {
       try {
-        const vectors = await strategy();
+        const vectors = await strategy.run();
         if (vectors?.length === inputs.length && vectors.every((v) => v.length > 0)) {
+          logger.debug({ strategy: strategy.name, count: vectors.length }, 'Embedding strategy ok');
           return vectors;
         }
+        logger.warn(
+          { strategy: strategy.name, got: vectors?.length ?? 0, expected: inputs.length },
+          'Embedding strategy returned incomplete vectors',
+        );
       } catch (err) {
         lastErr = err;
+        logger.warn(
+          {
+            strategy: strategy.name,
+            status: axios.isAxiosError(err) ? err.response?.status : undefined,
+            code: axios.isAxiosError(err) ? err.code : undefined,
+          },
+          'Embedding strategy failed',
+        );
       }
     }
 
@@ -251,6 +323,45 @@ export class OllamaProvider implements AIProvider {
     throw new AiUnavailableError(
       'Embedding generation failed. The AI service returned an empty result.',
     );
+  }
+
+  private async resolveEmbedModel(requested: string): Promise<string> {
+    try {
+      const available = (await this.models()).map((m) => m.name);
+      if (available.length === 0) return requested;
+      if (available.includes(requested)) return requested;
+      const withLatest = `${requested}:latest`;
+      if (available.includes(withLatest)) return withLatest;
+      const prefix = available.find(
+        (name) => name === requested || name.startsWith(`${requested}:`),
+      );
+      if (prefix) return prefix;
+      logger.warn(
+        { requested, availableCount: available.length },
+        'Requested embedding model not listed in Ollama tags; attempting anyway',
+      );
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : err, requested },
+        'Could not resolve embedding model from tags',
+      );
+    }
+    return requested;
+  }
+
+  private async postEmbedSequential(
+    endpoint: string,
+    model: string,
+    inputs: string[],
+  ): Promise<number[][] | null> {
+    const embeddings: number[][] = [];
+    for (const input of inputs) {
+      const { data } = await this.client.post<OllamaEmbedResponse>(endpoint, { model, input });
+      const vector = data.embeddings?.[0] ?? data.embedding;
+      if (!vector?.length) return null;
+      embeddings.push(vector);
+    }
+    return embeddings;
   }
 
   private async postEmbedBatch(
@@ -337,7 +448,11 @@ export class OllamaProvider implements AIProvider {
     return this.configurationOk;
   }
 
-  private async withRetry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
+  private async withRetry<T>(
+    fn: () => Promise<T>,
+    attempts = 2,
+    backoffMs: number[] = [200, 400],
+  ): Promise<T> {
     let lastErr: unknown;
     for (let i = 0; i < attempts; i++) {
       try {
@@ -346,9 +461,14 @@ export class OllamaProvider implements AIProvider {
         lastErr = err;
         const retryable =
           axios.isAxiosError(err) &&
-          (!err.response || err.response.status >= 500 || err.code === 'ECONNRESET');
+          (!err.response ||
+            err.response.status >= 500 ||
+            err.response.status === 429 ||
+            err.code === 'ECONNRESET' ||
+            err.code === 'ETIMEDOUT' ||
+            err.code === 'ECONNABORTED');
         if (!retryable || i === attempts - 1) throw err;
-        await sleep(200 * (i + 1));
+        await sleep(backoffMs[i] ?? backoffMs[backoffMs.length - 1] ?? 500);
       }
     }
     throw lastErr;
@@ -375,21 +495,36 @@ export class OllamaProvider implements AIProvider {
     };
   }
 
-  private wrapError(err: unknown, operation: string): AiUnavailableError {
+  private wrapError(err: unknown, operation: string, embedModel?: string): AiUnavailableError {
     if (axios.isAxiosError(err)) {
       const status = err.response?.status;
-      const timedOut = err.code === 'ECONNABORTED';
+      const timedOut = err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT';
+      const body =
+        typeof err.response?.data === 'object' && err.response.data !== null
+          ? JSON.stringify(err.response.data).slice(0, 200)
+          : undefined;
       logger.error(
         {
           operation,
           status,
           code: err.code,
+          body,
           // never log full URL with secrets; axios may include baseURL — redact
           message: err.message?.replace(/https?:\/\/[^\s]+/gi, '[redacted-host]'),
         },
         'Ollama provider error',
       );
       if (operation === 'embeddings') {
+        if (status === 404 || (body && /model/i.test(body) && /not found/i.test(body))) {
+          return new AiUnavailableError(
+            `Embedding model "${embedModel ?? this.defaultEmbedModel}" is not installed on the AI host. Install it with: ollama pull ${embedModel ?? this.defaultEmbedModel}`,
+          );
+        }
+        if (status === 403) {
+          return new AiUnavailableError(
+            'Embedding endpoint is blocked on the AI host. Ensure /api/embed is exposed alongside /api/chat.',
+          );
+        }
         return new AiUnavailableError(
           timedOut
             ? 'Embedding timed out. The AI service is busy — please try again shortly.'

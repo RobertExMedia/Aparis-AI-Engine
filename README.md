@@ -103,8 +103,9 @@ data: [DONE]
 See `.env.example`. Critical vars:
 
 - `OLLAMA_BASE_URL` — default `https://ai.aparis.io`
+- `OLLAMA_EMBED_ENDPOINT` — default `/api/embed` (required for knowledge training; `/api/tags` alone is not enough)
 - `OLLAMA_CHAT_MODEL` — default DeepSeek (`deepseek-r1:latest`)
-- `OLLAMA_EMBED_MODEL` — default `nomic-embed-text`
+- `OLLAMA_EMBED_MODEL` — default `nomic-embed-text` (run `ollama pull nomic-embed-text` on the AI host)
 - `JWT_SECRET` / `ADMIN_JWT_SECRET`
 - `DATABASE_URL` / `REDIS_URL`
 

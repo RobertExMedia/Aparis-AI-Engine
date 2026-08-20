@@ -29,7 +29,9 @@ Enum: `embedding_status` (`pending|processing|embedded|failed`)
 Unique `(agent_id, knowledge_source_id)`
 
 ### Storage
-Bucket id: `knowledge-files` (private). Path: `{workspaceId}/{sourceId}/{uuid}-{filename}`  
+Bucket id: `knowledge-files` (private). Path: `{workspaceId}/{sourceId}/{uuid}-{filename}`
+
+**Storage key rules:** Supabase rejects spaces, commas, and non-ASCII characters in object keys. Hub uploads should sanitize the filename segment (keep the original in `file_name` / `storage_path` only if it matches the stored object). Engine resolves mismatches at download by listing the folder when needed.  
 Policies isolate by workspace UUID folder segment. Bucket create may be dashboard-only (not in SQL).
 
 ## Missing for RAG (migration required)

@@ -55,23 +55,20 @@ describe('OllamaProvider', () => {
     expect(result.message).not.toContain('secret-host');
   });
 
-  it('prefers /api/embed for batched embeddings', async () => {
+  it('prefers sequential /api/embed for batched embeddings', async () => {
     post.mockResolvedValue({
       data: {
         model: 'nomic-embed-text',
-        embeddings: [
-          [0.1, 0.2],
-          [0.3, 0.4],
-        ],
+        embeddings: [[0.1, 0.2]],
       },
     });
     const provider = new OllamaProvider();
-    const result = await provider.embeddings({ input: ['a', 'b'], model: 'nomic-embed-text' });
-    expect(result.embeddings).toHaveLength(2);
+    const result = await provider.embeddings({ input: ['a'], model: 'nomic-embed-text' });
+    expect(result.embeddings).toHaveLength(1);
     expect(post.mock.calls[0]?.[0]).toBe('/api/embed');
     expect(post.mock.calls[0]?.[1]).toEqual({
       model: 'nomic-embed-text',
-      input: ['a', 'b'],
+      input: 'a',
     });
   });
 

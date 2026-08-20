@@ -3,6 +3,7 @@ import { config, runStartupSecurityChecks } from './config/index.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
 import { connectRedis, disconnectRedis } from './config/redis.js';
 import { getAIProvider } from './providers/index.js';
+import { OllamaProvider } from './providers/ollama/ollama.provider.js';
 import { startKnowledgeWorker } from './workers/knowledge.worker.js';
 import { closeKnowledgeJobStore } from './services/knowledge-job-progress.service.js';
 import { logger } from './utils/logger.js';
@@ -22,6 +23,21 @@ async function main() {
     );
   } else {
     logger.info({ latencyMs: health.latencyMs }, 'Ollama health check OK');
+  }
+
+  if (ollama instanceof OllamaProvider) {
+    const embedHealth = await ollama.embeddingHealth();
+    if (!embedHealth.ok) {
+      logger.warn(
+        { latencyMs: embedHealth.latencyMs, message: embedHealth.message, model: embedHealth.model },
+        'Ollama embedding health check failed at startup. Knowledge processing will fail until nomic-embed-text is available and /api/embed is reachable.',
+      );
+    } else {
+      logger.info(
+        { latencyMs: embedHealth.latencyMs, model: embedHealth.model },
+        'Ollama embedding health check OK',
+      );
+    }
   }
 
   const knowledgeWorker = startKnowledgeWorker();
