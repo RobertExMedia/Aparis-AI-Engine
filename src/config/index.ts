@@ -36,6 +36,8 @@ const envSchema = z.object({
   OLLAMA_BASE_URL: z.string().url().default('https://ai.aparis.io'),
   OLLAMA_CHAT_ENDPOINT: z.string().default('/api/chat'),
   OLLAMA_MODELS_ENDPOINT: z.string().default('/api/tags'),
+  /** Modern Ollama embed API (recommended). Falls back to OLLAMA_EMBEDDINGS_ENDPOINT. */
+  OLLAMA_EMBED_ENDPOINT: z.string().default('/api/embed'),
   OLLAMA_EMBEDDINGS_ENDPOINT: z.string().default('/api/embeddings'),
   OLLAMA_CHAT_MODEL: z.string().default('deepseek-r1:1.5b'),
   OLLAMA_EMBEDDING_MODEL: z.string().optional(),
@@ -176,6 +178,9 @@ export const config = {
     modelsEndpoint: env.OLLAMA_MODELS_ENDPOINT.startsWith('/')
       ? env.OLLAMA_MODELS_ENDPOINT
       : `/${env.OLLAMA_MODELS_ENDPOINT}`,
+    embedEndpoint: env.OLLAMA_EMBED_ENDPOINT.startsWith('/')
+      ? env.OLLAMA_EMBED_ENDPOINT
+      : `/${env.OLLAMA_EMBED_ENDPOINT}`,
     embeddingsEndpoint: env.OLLAMA_EMBEDDINGS_ENDPOINT.startsWith('/')
       ? env.OLLAMA_EMBEDDINGS_ENDPOINT
       : `/${env.OLLAMA_EMBEDDINGS_ENDPOINT}`,

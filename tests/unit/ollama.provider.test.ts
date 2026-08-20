@@ -54,4 +54,46 @@ describe('OllamaProvider', () => {
     expect(result.message).not.toContain('http');
     expect(result.message).not.toContain('secret-host');
   });
+
+  it('prefers /api/embed for batched embeddings', async () => {
+    post.mockResolvedValue({
+      data: {
+        model: 'nomic-embed-text',
+        embeddings: [
+          [0.1, 0.2],
+          [0.3, 0.4],
+        ],
+      },
+    });
+    const provider = new OllamaProvider();
+    const result = await provider.embeddings({ input: ['a', 'b'], model: 'nomic-embed-text' });
+    expect(result.embeddings).toHaveLength(2);
+    expect(post.mock.calls[0]?.[0]).toBe('/api/embed');
+    expect(post.mock.calls[0]?.[1]).toEqual({
+      model: 'nomic-embed-text',
+      input: ['a', 'b'],
+    });
+  });
+
+  it('falls back to legacy /api/embeddings prompt API', async () => {
+    post
+      .mockRejectedValueOnce({ isAxiosError: true, response: { status: 404 } })
+      .mockRejectedValueOnce({ isAxiosError: true, response: { status: 404 } })
+      .mockRejectedValueOnce({ isAxiosError: true, response: { status: 404 } })
+      .mockResolvedValueOnce({
+        data: { embedding: [0.1, 0.2] },
+      })
+      .mockResolvedValueOnce({
+        data: { embedding: [0.3, 0.4] },
+      });
+    const provider = new OllamaProvider();
+    const result = await provider.embeddings({ input: ['a', 'b'], model: 'nomic-embed-text' });
+    expect(result.embeddings).toEqual([
+      [0.1, 0.2],
+      [0.3, 0.4],
+    ]);
+    expect(post.mock.calls.some((call) => call[0] === '/api/embeddings' && call[1]?.prompt === 'a')).toBe(
+      true,
+    );
+  });
 });

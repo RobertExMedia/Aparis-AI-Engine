@@ -17,6 +17,7 @@ export default defineConfig({
       OLLAMA_BASE_URL: 'https://ai.aparis.io',
       OLLAMA_CHAT_ENDPOINT: '/api/chat',
       OLLAMA_MODELS_ENDPOINT: '/api/tags',
+      OLLAMA_EMBED_ENDPOINT: '/api/embed',
       OLLAMA_EMBEDDINGS_ENDPOINT: '/api/embeddings',
       OLLAMA_CHAT_MODEL: 'deepseek-r1:1.5b',
     },

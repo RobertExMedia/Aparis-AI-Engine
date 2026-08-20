@@ -51,6 +51,7 @@ export class OllamaProvider implements AIProvider {
   private readonly defaultEmbedModel: string;
   private readonly chatEndpoint: string;
   private readonly modelsEndpoint: string;
+  private readonly embedEndpoint: string;
   private readonly embeddingsEndpoint: string;
   private configurationOk = true;
 
@@ -64,6 +65,7 @@ export class OllamaProvider implements AIProvider {
     this.defaultEmbedModel = embedModel;
     this.chatEndpoint = config.ollama.chatEndpoint;
     this.modelsEndpoint = config.ollama.modelsEndpoint;
+    this.embedEndpoint = config.ollama.embedEndpoint;
     this.embeddingsEndpoint = config.ollama.embeddingsEndpoint;
     this.client = axios.create({
       baseURL: baseUrl,
@@ -205,40 +207,85 @@ export class OllamaProvider implements AIProvider {
 
     try {
       return await this.withRetry(async () => {
-        try {
-          const { data } = await this.client.post<OllamaEmbedResponse>(
-            this.embeddingsEndpoint,
-            { model, input: inputs },
+        const vectors = await this.requestEmbeddings(model, inputs);
+        if (vectors.length !== inputs.length) {
+          throw new AiUnavailableError(
+            'Embedding generation failed. The AI service returned an incomplete result.',
           );
-          const embeddings = data.embeddings ?? (data.embedding ? [data.embedding] : []);
-          if (embeddings.length === inputs.length) {
-            return { embeddings, model };
-          }
-        } catch {
-          // Fall through to per-input prompt API (older Ollama shape).
         }
-
-        const embeddings: number[][] = [];
-        for (const input of inputs) {
-          const { data } = await this.withRetry(() =>
-            this.client.post<{ embedding: number[] }>(this.embeddingsEndpoint, {
-              model,
-              prompt: input,
-            }),
-          );
-          if (!data.embedding?.length) {
-            throw new AiUnavailableError(
-              'Embedding generation failed. The AI service returned an empty result.',
-            );
-          }
-          embeddings.push(data.embedding);
-        }
-        return { embeddings, model };
+        return { embeddings: vectors, model };
       });
     } catch (err) {
       if (err instanceof AiUnavailableError) throw err;
       throw this.wrapError(err, 'embeddings');
     }
+  }
+
+  /**
+   * Ollama hosts may expose different embed APIs:
+   * - /api/embed (current, batched `input`)
+   * - /api/embeddings (legacy, `prompt` per item)
+   * - /v1/embeddings (OpenAI-compatible)
+   */
+  private async requestEmbeddings(model: string, inputs: string[]): Promise<number[][]> {
+    const strategies: Array<() => Promise<number[][] | null>> = [
+      () => this.postEmbedBatch(this.embedEndpoint, { model, input: inputs }),
+      () => this.postEmbedBatch(this.embeddingsEndpoint, { model, input: inputs }),
+      () => this.postOpenAiEmbeddings(model, inputs),
+      () => this.postLegacyPromptEmbeddings(model, inputs),
+    ];
+
+    let lastErr: unknown;
+    for (const strategy of strategies) {
+      try {
+        const vectors = await strategy();
+        if (vectors?.length === inputs.length && vectors.every((v) => v.length > 0)) {
+          return vectors;
+        }
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+
+    if (lastErr) throw lastErr;
+    throw new AiUnavailableError(
+      'Embedding generation failed. The AI service returned an empty result.',
+    );
+  }
+
+  private async postEmbedBatch(
+    endpoint: string,
+    body: { model: string; input: string[] },
+  ): Promise<number[][] | null> {
+    const { data } = await this.client.post<OllamaEmbedResponse>(endpoint, body);
+    const embeddings = data.embeddings ?? (data.embedding ? [data.embedding] : []);
+    return embeddings.length > 0 ? embeddings : null;
+  }
+
+  private async postOpenAiEmbeddings(model: string, inputs: string[]): Promise<number[][] | null> {
+    const { data } = await this.client.post<{
+      data?: Array<{ embedding?: number[] }>;
+    }>('/v1/embeddings', { model, input: inputs });
+    const embeddings = (data.data ?? [])
+      .map((row) => row.embedding)
+      .filter((v): v is number[] => Array.isArray(v) && v.length > 0);
+    return embeddings.length > 0 ? embeddings : null;
+  }
+
+  private async postLegacyPromptEmbeddings(
+    model: string,
+    inputs: string[],
+  ): Promise<number[][] | null> {
+    const embeddings: number[][] = [];
+    for (const input of inputs) {
+      const { data } = await this.client.post<{ embedding: number[] }>(this.embeddingsEndpoint, {
+        model,
+        prompt: input,
+      });
+      if (!data.embedding?.length) return null;
+      embeddings.push(data.embedding);
+    }
+    return embeddings;
   }
 
   async models(): Promise<AIModelInfo[]> {
