@@ -17,6 +17,10 @@ import {
   isInvalidStorageKeyError,
   parseKnowledgeStoragePath,
 } from '../../knowledge/storage-path.js';
+import {
+  sanitizeJsonForPostgres,
+  sanitizeTextForPostgres,
+} from '../../knowledge/sanitize-text.js';
 
 /** Untyped client until Database types are fully regenerated from Hub. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -327,7 +331,15 @@ export class SupabaseKnowledgeRepository {
     }>,
   ): Promise<KnowledgeChunkRow[]> {
     if (rows.length === 0) return [];
-    const { data, error } = await kb(accessToken).from('knowledge_chunks').insert(rows).select('*');
+    const sanitizedRows = rows.map((row) => ({
+      ...row,
+      content: sanitizeTextForPostgres(row.content),
+      metadata: sanitizeJsonForPostgres(row.metadata) as Record<string, unknown>,
+    }));
+    const { data, error } = await kb(accessToken)
+      .from('knowledge_chunks')
+      .insert(sanitizedRows)
+      .select('*');
     if (error) throwSupabaseError('Failed to insert knowledge chunks', error);
     return (data ?? []) as KnowledgeChunkRow[];
   }
@@ -352,7 +364,9 @@ export class SupabaseKnowledgeRepository {
     const { data, error } = await kb(accessToken)
       .from('knowledge_chunks')
       .update({
-        ...patch,
+        ...(patch.content !== undefined
+          ? { content: sanitizeTextForPostgres(patch.content) }
+          : patch),
         embedding_status: patch.content !== undefined ? 'pending' : undefined,
       })
       .eq('id', chunkId)
